@@ -1,0 +1,2131 @@
+---
+title: "04_astro_neuron_coculture"
+author: 
+- name: "Aaron Wagen"
+- affiliation: UCL
+output: 
+  bookdown::html_document2:
+    figure_caption: yes
+    code_folding: hide
+    theme: paper
+    highlight: kate
+    df_print: paged
+    toc: true
+    toc_float: true
+    number_sections: true
+date: '2022-08-22'
+---
+
+
+
+# 1) Preparation 
+```{r, setup, message=F}
+
+options(datatable.showProgress = FALSE)
+options(warn=-1)
+library(GenomicRanges)
+library(data.table)
+library(tidyverse)
+library(plyranges)
+library(paletteer)
+library(patchwork)
+library(gridExtra)
+library(ggtranscript)
+library(cowplot)
+library(parallel)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+palette <- c("#13909B", "grey70")
+
+
+```
+
+
+> Aim: What's the major aim of this .Rmd?
+This markdown outlines the processing and analysis of A-to-I RNA editing in IPSC derived astrocytes and astrocytes in co-cultures in neurons. 
+<br><br>
+
+
+# Background
+
+This work builds upon functional and transcriptomic analysis undertaken by Minee Choi and Karishma D'Sa, showing an increased in inflammatory cytokine response and viral response pathways.
+
+# Methods {.tabset}
+
+
+
+# Supplementary code {.tabset}
+
+Following section includes any intermediary code used in this `.Rmd`.
+
+
+The reference files were prepared using the following code:
+```{r prepare_references, eval = F}
+
+source(here::here("r_scripts", "01_process_reference_files.R"))
+```
+
+
+The RNA editing was derived from the raw transcriptomic files using the following workflow:
+```{bash run-jacusa, eval = F}
+
+bash /scripts/02_jacusa_workflow.txt
+
+```
+
+
+The JACUSA results were processed using the following code:
+```{r process_jacusa_output, eval=F}
+
+source(here::here("r_scripts", "03_process_detect_astro.R"))
+```
+
+
+
+
+
+```{r}
+# These files were prepared as per 03_alignment_rates.Rmd
+alu_annotations_range <- readRDS("~/AIediting/references/sine_line_dfam2_hg38_range_220817.rds")
+reduced_ensembl_range <- readRDS("~/AIediting/references/reduced_ensembl_38-93_range_220811.rds")
+```
+
+
+
+```{r}
+data_dir <- "/camp/lab/gandhis/home/users/wagena/AIediting/raw_data/astro_neuron_bulk"
+jacusa_dir <- str_c(data_dir, "/JACUSA")
+detect_dir <- str_c(jacusa_dir, "/detect")
+differential_dir <- str_c(jacusa_dir, "/differential")
+ensembl_file <- "/camp/lab/gandhis/home/users/wagena/AIediting/raw_data/astro_neuron_bulk/references/Homo_sapiens.GRCh38.93.gtf.gz" 
+fasta_file <- "/camp/lab/rodriquess/home/users/wagena/timestamps/references/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz"
+annotation_file <- str_c(data_dir, "/sample_map_ipsc_astr_neur_JACUSA.txt")
+CORES <- 1
+```
+
+```{r}
+file_paths <- list.files(detect_dir, pattern=".AG.bed", full.names= TRUE)
+paths_annotation <- list.files(detect_dir, pattern=".AG.bed", full.names= TRUE) %>% 
+                                 as_tibble() %>% 
+                                 mutate(Sample = basename(file_paths) %>% 
+                                          str_sub(1,16)) %>% 
+  rename(file_path = value)
+
+```
+
+
+```{r}
+annotation <- read_tsv(annotation_file,
+                        col_types = "ccfffffc") %>% 
+  mutate(Sample = str_sub(sampleId_long, 1,16))  %>% 
+  left_join(., paths_annotation, by = 'Sample')
+
+annotation
+
+```
+
+
+# 2A) Run QC script for all samples, with 4% alignment mismatch allowed (results saved in output folder)
+
+
+
+```{r}
+
+summary_list <- list()
+
+for (sample_number in 1:nrow(annotation)) {
+
+sample_path <- annotation$file_path[sample_number]
+sample_name = annotation$Sample[sample_number]
+sample_description = annotation$sample_desc[sample_number]
+list_name = str_c(sample_name, "_list")
+
+print(sample_number)
+print(sample_name)
+print(sample_path)
+print(sample_description)
+
+
+data <- read_bed_QC(sample_path)
+data <- process_bed_QC(data, annotation)
+data_range <- make_genomic_range(data)
+
+
+annotated_edits <- annotate_edits(data_range, reduced_ensembl_range, alu_annotations_range)
+annotated_edits_list <- filter_edits(annotated_edits)
+
+number_of_edits_barplot <- barplot_by_gene_annotation(annotated_edits_list, 
+                           proportional="stack",
+                           comparison = gene_type) +
+  labs(title = "Number of edits")
+
+proportion_of_edits_barplot <- barplot_by_gene_annotation(annotated_edits_list, 
+                           proportional="fill",
+                           comparison = gene_type) +
+  labs(title = "Proportion of edits", y = "Proportion of editing events" )
+
+proportion_of_edits_biotype_barplot <- barplot_by_gene_annotation(annotated_edits_list, 
+                           proportional="fill",
+                           comparison = gene_biotype) +
+   scale_fill_paletteer_d("ggsci::default_igv", #"colorBlindness::SteppedSequential5Steps", 
+                         direction = 1,
+                         na.value = "grey70") +
+   theme(legend.text = element_text(size=8)) +
+  labs(title = "Proportion of edits by biotype", y = "Proportion of editing events" )
+
+proportion_of_edits_alus <- barplot_by_gene_annotation(annotated_edits_list, 
+                           proportional="fill",
+                           comparison = repeat_class) +
+  labs(title = "Proportion of repeat classes", y = "Proportion of editing events" )
+
+proportion_of_edits_alus_dropna <- barplot_by_gene_annotation_dropNA(annotated_edits_list,
+                           proportional="fill",
+                           comparison = repeat_class) +
+  theme(legend.position = "none") +
+  labs(title = "Proportion of repeat classes, no NAs", y = "Proportion of editing events" )
+
+alu_edits_annotated <- purrr::map(annotated_edits_list, ~dplyr::filter(., repeat_class == "SINE/Alu"))
+
+proportion_of_alus_genic <- barplot_by_gene_annotation(alu_edits_annotated, 
+                           proportional="fill",
+                           comparison = gene_type) +
+  labs(title = "Genic annotations of alu edits", y = "Proportion of editing events" )
+
+#Create summary plot
+genic_legend <- get_legend(number_of_edits_barplot)
+alu_legend <- get_legend(proportion_of_edits_alus)
+sample_summary_plot <- grid.arrange(arrangeGrob(number_of_edits_barplot + theme(legend.position = "none"),
+                         proportion_of_edits_barplot + theme(legend.position = "none"),
+                         genic_legend, 
+                         ncol=3, widths = c(.9,.9,.25)),
+             proportion_of_edits_biotype_barplot,
+             arrangeGrob(proportion_of_edits_alus + theme(legend.position = "none"), 
+                         proportion_of_edits_alus_dropna + theme(legend.position = "none"),
+                         alu_legend,
+                         ncol=3, widths = c(.9,.9,.4)),
+             arrangeGrob(proportion_of_alus_genic +theme(legend.position = "none"),
+                         genic_legend,
+                         ncol = 3, widths = c(0.9, 0.25, 0.9)), # make figure same width
+             ncol = 1,
+             top = str_c("Sample ", sample_name, " : ", sample_description)
+             )
+# Save sample summary plot
+ggsave(plot = sample_summary_plot, width = 10, height = 18, dpi = 300,
+       filename = str_c("/camp/lab/gandhis/home/users/wagena/AIediting/processed_data/astro_neuro_coculture/astro_neuro_editing_QC/", 
+                        sample_name, 
+                        ".pdf"))
+
+# Create sample summary list
+assign(list_name,
+       list("All_edits_lists" = annotated_edits_list,
+                    "Number_of_edits_plot" = number_of_edits_barplot,
+                    "Genic_proportions_plot" = proportion_of_edits_barplot,
+                    "Biotype_proportions_plot" = proportion_of_edits_biotype_barplot,
+                    "Repeat_proportions_plot" = proportion_of_edits_alus,
+                    "Repeat_proportions_dropna+plot" = proportion_of_edits_alus_dropna,
+                    "Alu_edits_lists" = alu_edits_annotated,
+                    "Alu_genic_proportions_plot" = proportion_of_alus_genic,
+            "Sample_summary_plot" = sample_summary_plot)
+)
+
+
+# Combine lists to allow for comparisons
+summary_list[[list_name]] <- eval(as.name(list_name))
+
+}
+```
+
+
+
+## Comparison across samples from QC data (Filtered for z score)
+
+
+```{r, fig.height = 8, fig.width = 8}
+
+# A map function that will return all dataframes in the all_edits_lists list, including all edits, zscore_filter, and z_score_reads filter. Given the edits have all be labelled by individual filtering, I will likely take these and filter the dataframes
+comparison_df <- summary_list %>% 
+  purrr::map(., "All_edits_lists") %>% 
+  purrr::map_dfr(., "z_score_edits")
+
+alu_comparison_df <-  summary_list %>% 
+  purrr::map(., "Alu_edits_lists") %>% 
+  purrr::map_dfr(., "z_score_edits")
+```
+
+
+```{r, fig.width = 12, fig.height = 18, error=F, warning =F, message=F, comment=F, echo=F}
+
+comparison_edit_plot <- compare_plot(comparison_df, 
+                                     proportional = "stack", 
+                                     comparison = gene_type) + 
+  theme(axis.text.x = element_blank())
+
+comparison_edit_proportion_plot <- compare_plot(comparison_df, 
+                                                proportional = "fill", 
+                                                comparison = gene_type) +
+   theme(axis.text.x = element_blank()) +
+    labs(y = "Proportion of editing sites")
+
+comparison_edit_cells <- compare_plot(comparison_df, 
+                                                proportional = "stack", 
+                                                comparison = cells) +
+   theme(axis.text.x = element_blank()) +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+    labs(y = "Number of editing sites")
+
+comparison_edit_treatment <- compare_plot(comparison_df, 
+                                                proportional = "stack", 
+                                                comparison = treatment) +
+   theme(axis.text.x = element_blank()) +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = -1) +
+    labs(y = "Number of editing sites")
+
+comparison_repeat_plot <- compare_plot(comparison_df, 
+                                       proportional = "stack", 
+                                       comparison = repeat_class) +
+  theme(axis.text.x = element_blank())
+
+comparison_repeat_proportion_plot <- compare_plot_dropNa(comparison_df, 
+                                                         proportional = "fill", 
+                                                         comparison = repeat_class) +
+  theme(legend.position = "none") +
+    labs(y = "Proportion of editing sites")
+
+
+((comparison_edit_plot / comparison_edit_proportion_plot) + plot_layout(guides = 'collect'))  / 
+    comparison_edit_cells /
+    comparison_edit_treatment /
+    comparison_repeat_plot /
+     comparison_repeat_proportion_plot  +
+     plot_layout(guides = 'collect') +
+  plot_annotation(title = "Editing sites across samples")
+
+
+```
+
+
+Some things noted:
+
+* When there is less editing, this less so affects exonic regions. IE, variability moreso sits with introns and intergenic regions. This could be an artefact of mRNA production and the sequencing method, but also a biological reality.
+
+
+## Editing results in alu region
+```{r, fig.height = 12}
+comparison_alu_plot <- compare_plot(alu_comparison_df, 
+                                     proportional = "stack", 
+                                     comparison = gene_type) +
+    theme(axis.text.x = element_blank())
+
+comparison_alu_proportion_plot <- compare_plot(alu_comparison_df, 
+                                                proportional = "fill", 
+                                                comparison = gene_type) +
+  labs(y = "Proportion of editing sites") +
+    theme(axis.text.x = element_blank())
+
+comparison_alu_culture_plot <- compare_plot(alu_comparison_df, 
+                                                proportional = "stack", 
+                                                comparison = cells) +
+   theme(axis.text.x = element_blank()) +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  labs(y = "Editing sites by culture type") 
+   
+
+comparison_alu_treatment_plot <- compare_plot(alu_comparison_df, 
+                                                proportional = "stack", 
+                                                comparison = treatment) +
+    scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = -1) +
+  labs(y = "Editing sites by treatment type") +
+    theme(axis.text.x = element_blank())
+
+
+
+
+(comparison_alu_plot /
+    comparison_alu_proportion_plot) /
+  comparison_alu_culture_plot /
+  comparison_alu_treatment_plot + 
+    plot_layout(guides = 'collect') + plot_annotation(title = "Exploring editing sites in alu regions")
+```
+
+# 2B) QC for collapsed samples: samples run with 0.16 alignment rates, collapsed by JACUSA into 4 groups: astro treat and untreat, cocul treat and untreat, also neuron alone, treat and untreat
+
+```{r}
+data_dir <- "/camp/lab/gandhis/home/users/wagena/AIediting/raw_data/astro_neuron_bulk/16_alignment"
+jacusa_dir <- str_c(data_dir, "/jacusa_detect")
+detect_dir <- jacusa_dir
+differential_dir <- str_c(jacusa_dir, "/differential")
+ensembl_file <- "/camp/lab/gandhis/home/users/wagena/AIediting/raw_data/astro_neuron_bulk/references/Homo_sapiens.GRCh38.93.gtf.gz" 
+fasta_file <- "/camp/lab/rodriquess/home/users/wagena/timestamps/references/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz"
+annotation_file <- str_c(data_dir, "/SampleAnnot_differential.txt")
+CORES <- 1
+```
+
+```{r}
+file_paths <- list.files(detect_dir, pattern=".AG.bed", full.names= TRUE)
+paths_annotation <- list.files(detect_dir, pattern=".AG.bed", full.names= TRUE) %>% 
+                                 as_tibble() %>% 
+                                 mutate(Sample = basename(file_paths) %>% 
+                                          str_replace(".AG.bed", ""))  %>% 
+  dplyr::rename(file_path = value)
+
+```
+
+
+
+
+```{r}
+annotation <- read_tsv(annotation_file,
+                        col_types = "ccff") %>% 
+  dplyr::rename(Sample = sample_Id)  %>% 
+  left_join(., paths_annotation, by = 'Sample') #%>% 
+  #mutate(sample_desc = sample_name) # to add in when multiplexing
+```
+
+
+```{r}
+sample_number <- 1
+
+
+
+```
+
+
+
+Note: can load the output of this summary list in future as required.
+
+```{r}
+
+summary_list <- list()
+
+for (sample_number in 1:nrow(annotation)) {
+
+sample_path <- annotation$file_path[sample_number]
+sample_name = annotation$Sample[sample_number]
+sample_description = annotation$sample_desc[sample_number]
+list_name = str_c(sample_name, "_list")
+
+print(sample_number)
+print(sample_name)
+print(sample_path)
+print(sample_description)
+
+
+data <- read_bed_QC(sample_path)
+data <- process_bed_QC(data, annotation)
+data_range <- make_genomic_range(data)
+
+
+annotated_edits <- annotate_edits(data_range, reduced_ensembl_range, alu_annotations_range)
+annotated_edits_list <- filter_edits(annotated_edits)
+
+number_of_edits_barplot <- barplot_by_gene_annotation(annotated_edits_list, 
+                           proportional="stack",
+                           comparison = gene_type) +
+  labs(title = "Number of edits")
+
+proportion_of_edits_barplot <- barplot_by_gene_annotation(annotated_edits_list, 
+                           proportional="fill",
+                           comparison = gene_type) +
+  labs(title = "Proportion of edits", y = "Proportion of editing events" )
+
+proportion_of_edits_biotype_barplot <- barplot_by_gene_annotation(annotated_edits_list, 
+                           proportional="fill",
+                           comparison = gene_biotype) +
+   scale_fill_paletteer_d("ggsci::default_igv", #"colorBlindness::SteppedSequential5Steps", 
+                         direction = 1,
+                         na.value = "grey70") +
+   theme(legend.text = element_text(size=8)) +
+  labs(title = "Proportion of edits by biotype", y = "Proportion of editing events" )
+
+proportion_of_edits_alus <- barplot_by_gene_annotation(annotated_edits_list, 
+                           proportional="fill",
+                           comparison = repeat_class) +
+  labs(title = "Proportion of repeat classes", y = "Proportion of editing events" )
+
+proportion_of_edits_alus_dropna <- barplot_by_gene_annotation_dropNA(annotated_edits_list,
+                           proportional="fill",
+                           comparison = repeat_class) +
+  theme(legend.position = "none") +
+  labs(title = "Proportion of repeat classes, no NAs", y = "Proportion of editing events" )
+
+alu_edits_annotated <- purrr::map(annotated_edits_list, ~dplyr::filter(., repeat_class == "SINE/Alu"))
+
+proportion_of_alus_genic <- barplot_by_gene_annotation(alu_edits_annotated, 
+                           proportional="fill",
+                           comparison = gene_type) +
+  labs(title = "Genic annotations of alu edits", y = "Proportion of editing events" )
+
+editing_rate_violin <- violin_plot_editing_rate(annotated_edits_list) +
+  labs(title = "Editing rate per site (number of edits / number of reads)")
+
+editing_rate_violin_alus <- violin_plot_editing_rate(alu_edits_annotated) +
+  labs(title = "Editing rate per alu sites")
+
+editing_rate_violin_log <- violin_plot_editing_rate_trimmed_log(annotated_edits_list) +
+  labs(title = "Editing rate per site (number of edits / number of reads)",
+       subtitle = "Edit rates trimmed >0.01, <0.99, and log transformed")
+
+
+editing_rate_violin_alus_log <- violin_plot_editing_rate_trimmed_log(alu_edits_list) +
+  labs(title = "Editing rate per site (number of edits / number of reads)",
+       subtitle = "Edit rates trimmed >0.01, <0.99, and log transformed")
+
+
+#Create summary plot
+genic_legend <- get_legend(number_of_edits_barplot)
+alu_legend <- get_legend(proportion_of_edits_alus)
+sample_summary_plot <- grid.arrange(arrangeGrob(number_of_edits_barplot +
+                                                  theme(legend.position = "none"),
+                                                proportion_of_edits_barplot +
+                                                  theme(legend.position = "none"),
+                                                genic_legend,
+                                                ncol=3, widths = c(.9,.9,.25)),
+                                    proportion_of_edits_biotype_barplot,
+                                    arrangeGrob(proportion_of_edits_alus + theme(legend.position = "none"),
+                                                proportion_of_edits_alus_dropna + theme(legend.position = "none"),
+                                                alu_legend,
+                                                ncol=3, widths = c(.9,.9,.4)),
+                                    arrangeGrob(proportion_of_alus_genic +theme(legend.position = "none"),
+                                                genic_legend,
+                                                ncol = 3, widths = c(0.9, 0.25, 0.9)), # make figure same width
+                                    arrangeGrob(editing_rate_violin, 
+                                                editing_rate_violin_alus,
+                                                ncol=2),
+                                     arrangeGrob(editing_rate_violin_log, 
+                                                editing_rate_violin_alus_log,
+                                                ncol=2),
+                                    ncol = 1,
+                                    top = str_c("Sample ", sample_name, " : ", sample_description)
+                                    )
+# Save sample summary plot
+ggsave(plot = sample_summary_plot, width = 10, height = 25, dpi = 300,
+       filename = str_c("/camp/lab/gandhis/home/users/wagena/AIediting/processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/", 
+                        sample_name,
+                        "_mismatch16.pdf"))
+
+# Create sample summary list
+assign(list_name,
+       list("All_edits_lists" = annotated_edits_list,
+                    "Number_of_edits_plot" = number_of_edits_barplot,
+                    "Genic_proportions_plot" = proportion_of_edits_barplot,
+                    "Biotype_proportions_plot" = proportion_of_edits_biotype_barplot,
+                    "Repeat_proportions_plot" = proportion_of_edits_alus,
+                    "Repeat_proportions_dropna+plot" = proportion_of_edits_alus_dropna,
+                    "Alu_edits_lists" = alu_edits_annotated,
+                    "Alu_genic_proportions_plot" = proportion_of_alus_genic,
+            "Editing_rate_plot" = editing_rate_violin_log,
+            "Alu_editing_rate_plot" = editing_rate_violin_alus_log,
+            "Sample_summary_plot" = sample_summary_plot)
+)
+
+
+# Combine lists to allow for comparisons
+summary_list[[list_name]] <- eval(as.name(list_name))
+
+}
+
+```
+
+
+
+
+
+
+
+The summary of this output is saved, and can be loaded as required.
+```{r}
+#saveRDS(summary_list, "../processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/summary_list_16_mismatch")
+summary_list <- readRDS("../processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/summary_list_16_mismatch")
+```
+
+
+
+
+
+## Comparison across samples from QC data (Filtered for z score)
+
+
+```{r, fig.height = 8, fig.width = 8}
+
+# A map function that will return all dataframes in the all_edits_lists list, including all edits, zscore_filter, and z_score_reads filter. Given the edits have all be labelled by individual filtering, I will likely take these and filter the dataframes
+comparison_df <- summary_list %>% 
+  purrr::map(., "All_edits_lists") %>% 
+  purrr::map_dfr(., "z_score_edits") %>% 
+  mutate(Sample = factor(Sample, levels = c("astro_nt", "astro_asyn", "cocult_nt", "cocult_asyn", "neuron_nt", "neuron_asyn")))
+
+alu_comparison_df <-  summary_list %>% 
+  purrr::map(., "Alu_edits_lists") %>% 
+  purrr::map_dfr(., "z_score_edits") %>% 
+   mutate(Sample = factor(Sample, levels = c("astro_nt", "astro_asyn", "cocult_nt", "cocult_asyn", "neuron_nt", "neuron_asyn")))
+```
+
+
+### Prepare samples for VEP
+
+```{r}
+vep_input <- comparison_df %>% 
+  mutate(allele = "A/G") %>% 
+  dplyr::select(chromosome = seqnames,
+         start,
+         end,
+         allele,
+         strand,
+         identifier = sample_name)
+
+write_tsv(vep_input,
+          "../processed_data/astro_neuro_coculture/astro_neuro_16_VEP/all_sample_VEP.tsv")
+```
+
+
+
+```{r, fig.height=12, fig.width=10, error=F, warning =F, message=F, comment=F, echo=F}
+
+comparison_edit_plot <- compare_plot(comparison_df, 
+                                     proportional = "stack", 
+                                     comparison = gene_type) + 
+  theme(axis.text.x = element_blank())
+
+comparison_edit_proportion_plot <- compare_plot(comparison_df, 
+                                                proportional = "fill", 
+                                                comparison = gene_type) +
+   theme(axis.text.x = element_blank()) +
+    labs(y = "Proportion of editing sites")
+
+comparison_edit_culture <- compare_plot(comparison_df, 
+                                                proportional = "stack", 
+                                                comparison = culture) +
+   theme(axis.text.x = element_blank()) +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+    labs(y = "Number of editing sites")
+
+comparison_edit_treatment <- compare_plot(comparison_df, 
+                                                proportional = "stack", 
+                                                comparison = treatment) +
+   theme(axis.text.x = element_blank()) +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = -1) +
+    labs(y = "Number of editing sites")
+
+comparison_repeat_plot <- compare_plot(comparison_df, 
+                                       proportional = "stack", 
+                                       comparison = repeat_class) +
+  theme(axis.text.x = element_blank())
+
+comparison_repeat_proportion_plot <- compare_plot_dropNa(comparison_df, 
+                                                         proportional = "fill", 
+                                                         comparison = repeat_class) +
+  theme(legend.position = "none") +
+    labs(y = "Proportion of editing sites")
+
+comparison_edit_rate_plot <- compare_violin_plots(comparison_df)
+
+comparison_edit_rate_trimmed_plot <- compare_violin_plots_trimmed(comparison_df)
+
+
+comparison_edit_master_plot <- (comparison_edit_plot + comparison_edit_proportion_plot + plot_layout(guides = 'collect'))  / 
+    (comparison_repeat_plot + comparison_repeat_proportion_plot + plot_layout(guides = 'collect')) +
+  (comparison_edit_rate_plot +
+  comparison_edit_rate_trimmed_plot + plot_layout(guides='collect')) +
+  plot_annotation(title = "Editing sites across samples")
+
+ggsave(plot = comparison_edit_master_plot, width = 10, height = 12, dpi = 300,
+       filename = "/camp/lab/gandhis/home/users/wagena/AIediting/processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/comparison_edit_master_plot.pdf")
+
+```
+
+
+
+Some things noted:
+
+* When there is less editing, this less so affects exonic regions. IE, variability moreso sits with introns and intergenic regions. This could be an artefact of mRNA production and the sequencing method, but also a biological reality.
+* The number of editing sites increases with alpha syn treatment in neuron cultures alone. It decreases with astrocyte treatment. 
+* There is more editing in alu regions in neurons
+* Coculture follows an astrocyte model rather than a neuron only model
+
+
+## Editing results in alu region
+```{r, fig.width = 8, fig.height = 8}
+comparison_alu_plot <- compare_plot(alu_comparison_df, 
+                                     proportional = "stack", 
+                                     comparison = gene_type) +
+    theme(axis.text.x = element_blank())
+
+comparison_alu_proportion_plot <- compare_plot(alu_comparison_df, 
+                                                proportional = "fill", 
+                                                comparison = gene_type) +
+  labs(y = "Proportion of editing sites") +
+    theme(axis.text.x = element_blank())
+
+comparison_alu_culture_plot <- compare_plot(alu_comparison_df, 
+                                                proportional = "stack", 
+                                                comparison = culture) +
+   theme(axis.text.x = element_blank()) +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  labs(y = "Editing sites by culture type") 
+   
+
+comparison_alu_treatment_plot <- compare_plot(alu_comparison_df, 
+                                                proportional = "stack", 
+                                                comparison = treatment) +
+    scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = -1) +
+  labs(y = "Editing sites by treatment type") +
+    theme(axis.text.x = element_blank())
+
+comparison_alu_rate_plot <- compare_violin_plots(alu_comparison_df)
+
+comparison_alu_rate_trimmed_plot <- compare_violin_plots_trimmed(alu_comparison_df)
+
+
+comparison_alu_master_plot <- (comparison_alu_plot + comparison_alu_proportion_plot + plot_layout(guides = 'collect'))  / 
+  (comparison_alu_rate_plot +
+     comparison_alu_rate_trimmed_plot + plot_layout(guides = 'collect')) +
+  plot_annotation(title = "Editing sites across samples")
+
+ggsave(plot = comparison_alu_master_plot, width = 10, height = 10, dpi = 300,
+       filename = "/camp/lab/gandhis/home/users/wagena/AIediting/processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/comparison_alu_master_plot.pdf")
+
+```
+
+
+
+
+# 3) Enrichment of PD genes being edited verse other genes
+
+PD genes selected from Nalls et al 2019.
+
+```{r}
+pd_genes <- c("ENSG00000159363", "ENSG00000131943", "ENSG00000182578", "ENSG00000204843", "ENSG00000116675", "ENSG00000100225", "ENSG00000087086", "ENSG00000177628", "ENSG00000131979", "ENSG00000030582", "ENSG00000188906", "ENSG00000143669", "ENSG00000186868", "ENSG00000125741", "ENSG00000125779", "ENSG00000116288", "ENSG00000158828", "ENSG00000184381", "ENSG00000185345", "ENSG00000180228", "ENSG00000155961", "ENSG00000196660", "ENSG00000104635", "ENSG00000142319", "ENSG00000145335", "ENSG00000104133", "ENSG00000116096", "ENSG00000159082", "ENSG00000180176", "ENSG00000104833", "ENSG00000197969", "ENSG00000069329", "ENSG00000196998", "ENSG00000111676", "ENSG00000124788", "ENSG00000204842", "ENSG00000066427", "ENSG00000147894", "ENSG00000197386", "ENSG00000154118", "ENSG00000156475", "ENSG00000112592")
+```
+
+
+## Run with Alpha syn treated astrocytes with 3 metrics
+
+I have summarised the data in 3 columns: number of editing sites per gene, editing rate per gene, and editing sum per gene.
+
+```{r}
+astro_asyn_edits <- summary_list$astro_asyn_list$
+  All_edits_lists$z_score_edits
+edit_number <- astro_asyn_edits %>% 
+  group_by(gene_id) %>% 
+  tally() 
+edit_number
+
+edit_rate_per_gene <- astro_asyn_edits %>% 
+  group_by(gene_id) %>% 
+  summarise(across(Edits, mean)) %>% 
+  rename(editing_rate = Edits)
+edit_rate_per_gene
+
+edit_rate_sum_per_gene <- astro_asyn_edits %>% 
+  group_by(gene_id) %>% 
+  summarise(across(Edits, sum)) %>% 
+  rename(editing_sum = Edits)
+edit_rate_sum_per_gene
+
+
+Edit_rate_summary <-
+  left_join(edit_number, edit_rate_per_gene) %>% 
+  left_join(edit_rate_sum_per_gene)
+Edit_rate_summary
+```
+
+### Select PD genes and background genes (all genes that aren't PD):
+
+PD Genes:
+```{r}
+editing_pd_genes <- Edit_rate_summary %>% 
+  dplyr::filter(gene_id %in% pd_genes)
+
+editing_pd_genes
+```
+
+
+```{r}
+
+# Select out non PD genes
+editing_background_genes <- Edit_rate_summary$gene_id[Edit_rate_summary$gene_id %notin% pd_genes] %>% 
+  as_tibble() %>% 
+  rename(gene_id = value) %>%
+  left_join(Edit_rate_summary)
+```
+
+### Trial using number of editing sites per gene
+```{r}
+# Use number of editing sites
+target_genes <- editing_pd_genes %>% 
+  select(gene = gene_id,
+         value = n)
+
+background_genes <- editing_background_genes %>% 
+  select(gene = gene_id,
+         value = n)
+
+test_list_for_enrichment(target_genes, 
+                         background_genes, 
+                         n_iterations = 1000, 
+                         p_cutoff = 0.05, 
+                         set_seed = F, 
+                         gen_plot = T)
+```
+
+### Trial using editing rate per gene
+```{r}
+# Use editing rate
+target_genes <- editing_pd_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+background_genes <- editing_background_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+test_list_for_enrichment(target_genes, 
+                         background_genes, 
+                         n_iterations = 1000, 
+                         p_cutoff = 0.05, 
+                         set_seed = F, 
+                         gen_plot = T)
+```
+
+
+### Trial using editing sum per gene
+```{r}
+# Use editing rate
+target_genes <- editing_pd_genes %>% 
+  select(gene = gene_id,
+         value = editing_sum)
+
+background_genes <- editing_background_genes %>% 
+  select(gene = gene_id,
+         value = editing_sum)
+
+test_list_for_enrichment(target_genes, 
+                         background_genes, 
+                         n_iterations = 1000, 
+                         p_cutoff = 0.05, 
+                         set_seed = F, 
+                         gen_plot = T)
+```
+
+### Conclusions
+
+* No enrichment of editing in alpha syn treated astrocytes
+* Number of editing sites per gene is not helpful - it is a histogram
+* Editing rate is useful
+* Why is editing rate * number of sites not useful?
+
+
+## Run with astrocytes untreated with editing rate only
+```{r}
+astro_nt_edits <- summary_list$astro_nt_list$All_edits_lists$z_score_edits
+edit_rate_per_gene <- astro_nt_edits %>% 
+  group_by(gene_id) %>% 
+  summarise(across(Edits, mean)) %>% 
+  dplyr::rename(editing_rate = Edits)
+edit_rate_per_gene
+
+# Select out PD genes
+editing_pd_genes <- edit_rate_per_gene %>% 
+  dplyr::filter(gene_id %in% pd_genes)
+
+# Select out non PD genes
+editing_background_genes <- edit_rate_per_gene$gene_id[edit_rate_per_gene$gene_id %notin% pd_genes] %>% 
+  as_tibble() %>% 
+  dplyr::rename(gene_id = value) %>%
+  left_join(edit_rate_per_gene)
+
+# Use editing rate
+target_genes <- editing_pd_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+background_genes <- editing_background_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+test_list_for_enrichment(target_genes, 
+                         background_genes, 
+                         n_iterations = 1000, 
+                         p_cutoff = 0.05, 
+                         set_seed = F, 
+                         gen_plot = T)
+```
+
+## Run with astrocytes untreated with editing rate only
+```{r}
+astro_nt_edits <- summary_list$astro_nt_list$All_edits_lists$z_score_edits
+edit_rate_per_gene <- astro_nt_edits %>% 
+  group_by(gene_id) %>% 
+  summarise(across(Edits, mean)) %>% 
+  dplyr::rename(editing_rate = Edits)
+edit_rate_per_gene
+
+# Select out PD genes
+editing_pd_genes <- edit_rate_per_gene %>% 
+  dplyr::filter(gene_id %in% pd_genes)
+
+# Select out non PD genes
+editing_background_genes <- edit_rate_per_gene$gene_id[edit_rate_per_gene$gene_id %notin% pd_genes] %>% 
+  as_tibble() %>% 
+  dplyr::rename(gene_id = value) %>%
+  left_join(edit_rate_per_gene)
+
+# Use editing rate
+target_genes <- editing_pd_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+background_genes <- editing_background_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+test_list_for_enrichment(target_genes, 
+                         background_genes, 
+                         n_iterations = 1000, 
+                         p_cutoff = 0.05, 
+                         set_seed = F, 
+                         gen_plot = T)
+```
+
+
+ 
+## Coculture untreated enrichment by editing rate
+
+```{r}
+edits_enrichment <- summary_list$cocult_nt_list$All_edits_lists$z_score_edits
+edit_rate_per_gene <- edits_enrichment %>% 
+  group_by(gene_id) %>% 
+  summarise(across(Edits, mean)) %>% 
+  dplyr::rename(editing_rate = Edits)
+
+# Select out PD genes
+editing_pd_genes <- edit_rate_per_gene %>% 
+  dplyr::filter(gene_id %in% pd_genes)
+
+# Select out non PD genes
+editing_background_genes <- edit_rate_per_gene$gene_id[edit_rate_per_gene$gene_id %notin% pd_genes] %>% 
+  as_tibble() %>% 
+  dplyr::rename(gene_id = value) %>%
+  left_join(edit_rate_per_gene, by = 'gene_id')
+
+# Use editing rate
+target_genes <- editing_pd_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+background_genes <- editing_background_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+test_list_for_enrichment(target_genes, 
+                         background_genes, 
+                         n_iterations = 1000, 
+                         p_cutoff = 0.05, 
+                         set_seed = F, 
+                         gen_plot = T)
+```
+
+## Coculture asyn treated enrichment by editing rate
+
+```{r}
+edits_enrichment <- summary_list$cocult_asyn_list$All_edits_lists$z_score_edits
+edit_rate_per_gene <- edits_enrichment %>% 
+  group_by(gene_id) %>% 
+  summarise(across(Edits, mean)) %>% 
+  dplyr::rename(editing_rate = Edits)
+
+# Select out PD genes
+editing_pd_genes <- edit_rate_per_gene %>% 
+  dplyr::filter(gene_id %in% pd_genes)
+
+# Select out non PD genes
+editing_background_genes <- edit_rate_per_gene$gene_id[edit_rate_per_gene$gene_id %notin% pd_genes] %>% 
+  as_tibble() %>% 
+  dplyr::rename(gene_id = value) %>%
+  left_join(edit_rate_per_gene, by = 'gene_id')
+
+# Use editing rate
+target_genes <- editing_pd_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+background_genes <- editing_background_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+test_list_for_enrichment(target_genes, 
+                         background_genes, 
+                         n_iterations = 1000, 
+                         p_cutoff = 0.05, 
+                         set_seed = F, 
+                         gen_plot = T)
+```
+
+
+## Neuron untreated enrichment by editing rate
+
+```{r}
+edits_enrichment <- summary_list$neuron_nt_list$All_edits_lists$z_score_edits
+edit_rate_per_gene <- edits_enrichment %>% 
+  group_by(gene_id) %>% 
+  summarise(across(Edits, mean)) %>% 
+  dplyr::rename(editing_rate = Edits)
+
+
+# Select out PD genes
+editing_pd_genes <- edit_rate_per_gene %>% 
+  dplyr::filter(gene_id %in% pd_genes)
+
+# Select out non PD genes
+editing_background_genes <- edit_rate_per_gene$gene_id[edit_rate_per_gene$gene_id %notin% pd_genes] %>% 
+  as_tibble() %>% 
+  dplyr::rename(gene_id = value) %>%
+  left_join(edit_rate_per_gene, by = 'gene_id')
+
+# Use editing rate
+target_genes <- editing_pd_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+background_genes <- editing_background_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+test_list_for_enrichment(target_genes, 
+                         background_genes, 
+                         n_iterations = 1000, 
+                         p_cutoff = 0.05, 
+                         set_seed = F, 
+                         gen_plot = T)
+```
+
+
+
+
+
+## Neuron asyn treated enrichment by editing rate
+
+```{r}
+edits_enrichment <- summary_list$neuron_asyn_list$All_edits_lists$z_score_edits
+edit_rate_per_gene <- edits_enrichment %>% 
+  group_by(gene_id) %>% 
+  summarise(across(Edits, mean)) %>% 
+  dplyr::rename(editing_rate = Edits)
+
+
+# Select out PD genes
+editing_pd_genes <- edit_rate_per_gene %>% 
+  dplyr::filter(gene_id %in% pd_genes)
+
+# Select out non PD genes
+editing_background_genes <- edit_rate_per_gene$gene_id[edit_rate_per_gene$gene_id %notin% pd_genes] %>% 
+  as_tibble() %>% 
+  dplyr::rename(gene_id = value) %>%
+  left_join(edit_rate_per_gene, by = 'gene_id')
+
+# Use editing rate
+target_genes <- editing_pd_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+background_genes <- editing_background_genes %>% 
+  select(gene = gene_id,
+         value = editing_rate)
+
+test_list_for_enrichment(target_genes, 
+                         background_genes, 
+                         n_iterations = 1000, 
+                         p_cutoff = 0.05, 
+                         set_seed = F, 
+                         gen_plot = T)
+```
+
+
+# 3) JACUSA differential data QC (in progress)
+
+
+```{r}
+data_dir <- "/camp/lab/gandhis/home/users/wagena/AIediting/raw_data/astro_neuron_bulk/16_alignment"
+jacusa_dir <- str_c(data_dir, "/jacusa_detect")
+detect_dir <- jacusa_dir
+differential_dir <- str_c(data_dir, "/jacusa_differential")
+ensembl_file <- "/camp/lab/gandhis/home/users/wagena/AIediting/raw_data/astro_neuron_bulk/references/Homo_sapiens.GRCh38.93.gtf.gz" 
+fasta_file <- "/camp/lab/rodriquess/home/users/wagena/timestamps/references/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz"
+annotation_file <- str_c(data_dir, "/SampleAnnot.txt")
+CORES <- 1
+```
+
+```{r}
+file_paths <- list.files(differential_dir, pattern=".AG.bed", full.names= TRUE)
+paths_annotation <- list.files(differential_dir, pattern=".AG.bed", full.names= TRUE) %>% 
+                                 as_tibble() %>% 
+                                 mutate(Sample = basename(file_paths) %>% 
+                                          str_replace(".AG.bed", ""))  %>% 
+  dplyr::rename(file_path = value)
+
+paths_annotation
+```
+
+
+```{r}
+differential_summary_list <- list()
+
+for (sample_number in 1:nrow(annotation)) {
+sample_number=1
+sample_path <- annotation$file_path[sample_number]
+sample_name = annotation$Sample[sample_number]
+#sample_description = annotation$sample_desc[sample_number]
+list_name = str_c(sample_name, "_list")
+
+print(sample_number)
+print(sample_name)
+print(sample_path)
+#print(sample_description)
+
+
+data <- read_bed_QC(sample_path)
+data <- process_bed_QC(data, annotation)
+data_range <- make_genomic_range(data)
+
+
+annotated_edits <- annotate_edits(data_range, reduced_ensembl_range, alu_annotations_range)
+annotated_edits_list <- filter_edits(annotated_edits)
+```
+
+
+
+
+# 3B) JACUSA differential (non QC)
+
+
+```{r}
+data_dir <- "/camp/lab/gandhis/home/users/wagena/AIediting/raw_data/astro_neuron_bulk"
+differential_dir <- str_c(data_dir, "/16_alignment/jacusa_differential/")
+file_paths <- list.files(differential_dir, pattern=".AG.bed", full.names= TRUE)
+differential_files <- basename(file_paths)
+CORES = 1
+
+z_score_cuttoff = 1.96
+```
+
+
+## Explore all edit sites, even if not significant:
+
+
+### Can load processed data here:
+```{r}
+#saveRDS(annotated_dif_data, "../processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/annotated_differential_editing_sites.rds")
+
+annotated_dif_data <- readRDS("../processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/annotated_differential_editing_sites.rds")
+```
+
+
+
+
+```{r}
+read_multi_dif <- read_multi_dif_beds(differential_dir, differential_files)
+
+processed_multi_dif_data <- process_multi_dif_beds(read_multi_dif, z_score_cuttoff=0)
+```
+
+
+
+```{r}
+all_dif_data <- data.table::rbindlist(processed_multi_dif_data) 
+
+  
+all_dif_data <- all_dif_data %>% 
+  mutate(sig_edit = ifelse(z.score >=z_score_cuttoff | z.score <= -z_score_cuttoff, "significant", "not_significant"))
+
+all_dif_data <- all_dif_data %>% 
+  mutate(across(chromosome, as_factor)) %>% 
+  filter(chromosome %in% c(1:22, "X", "Y", "MT")) %>% 
+  droplevels() 
+
+all_dif_data <- all_dif_data %>% 
+ mutate(SampleNumber = 1:nrow(all_dif_data))
+
+all_dif_range <- make_genomic_range(all_dif_data)
+
+
+annotated_dif_data <- annotate_edits(all_dif_range, reduced_ensembl_range, alu_annotations_range)
+annotated_dif_data
+
+annotated_dif_data <- annotated_dif_data %>% 
+  mutate(treat_untreat_dif = treated_edits - untreated_edits) %>% 
+  dplyr::relocate(treat_untreat_dif, .after=treat_untreat_ratio)
+
+annotated_dif_data <- annotated_dif_data %>% 
+  mutate(Sample = str_replace_all(SampleName, c("astro_nt_vs_asyn" = "Astrocyte",
+                                                "cocult_nt_vs_asyn" = "Coculture",
+                                                "neuron_nt_vs_asyn" = "Neuron")))
+
+annotated_dif_data %>% 
+  group_by(SampleName) %>% 
+  arrange(desc(z.score))
+
+```
+
+
+
+
+Of note:
+
+* The genes with the greatest z-scores: DIRAS2 (associated with ADHD, zscore 69), MYC (oncogne), ESCO2 (cell cycle), METTL2B (methyltransferase), DDX (RNA secondary structure).
+* The genes with the greatest editing difference in neuron data: C19orf18 (Microcephaly, seizures), NSUN4 (RNA methylation, mitochondrial robosome assembly),NTNG2 (neurodevelopmental disorder, neurite growth), DPYSL4 - nervous system development 
+
+
+### Summary table of all editing sites
+
+```{r}
+annotated_dif_data %>%
+  group_by(SampleName) %>%
+  summarise(Increased_edit_ratio_treated = sum(treat_untreat_ratio >=1),
+            Decreased_edit_ratio_treated = sum(treat_untreat_ratio <=1),
+            Increased_edit_dif_treated = sum(treat_untreat_dif >0),
+            Decreased_edit_dif_treated = sum(treat_untreat_dif <0),
+            `New_edit_sites (ratio infinity)` = sum(treat_untreat_ratio == Inf),
+            `Lost_edit_sites (ratio zero)` = sum(treat_untreat_ratio == 0)) %>% 
+   arrange(desc(grepl("astro", SampleName)))
+
+```
+
+
+
+
+### Exploratory plots
+
+#### What is the distribution of editing rate differences/ratios in each cell line
+
+```{r}
+annotated_dif_data %>% 
+  arrange(sig_edit) %>% 
+  ggplot(aes(x = SampleName, y=treat_untreat_dif, colour = sig_edit)) +
+  geom_jitter(size = 0.2, alpha = 0.5) +
+  scale_color_manual(values = rev(palette)) +
+  theme_bw() +
+ # scale_y_continuous(trans='log10') +
+  labs(title = "All edits: Difference in editing rates, treated verse untreated", x = NULL, y = "Difference in editing rate in treated verse untreated \n in significantly different edits (log scale)")
+```
+
+
+```{r}
+annotated_dif_data %>% 
+  arrange(sig_edit) %>% 
+  ggplot(aes(x = SampleName, y=log10(treat_untreat_ratio), colour = sig_edit)) +
+  geom_jitter(size = 0.2, alpha = 0.5) +
+  scale_color_manual(values = rev(palette)) +
+  theme_bw() +
+  labs(title = "All edits: Difference in editing ratio, treated verse untreated", x = NULL, y = "Difference in editing rate in treated verse untreated \n in significantly different edits (log scale)")
+```
+
+
+```{r, fig.width=6, fig.height=9}
+annotated_dif_data %>% 
+  ggplot(aes(x=untreated_edits, y=treated_edits, colour = sig_edit )) +
+  geom_point(size = 0.2, alpha = 0.4) +
+  scale_color_manual(values = rev(palette)) +
+  theme_bw() +
+  theme(aspect.ratio = 1) +
+  labs(title = "All edits: editing rate in treated verse untreated, for each cell line", x = 'Editing rate in untreated samples', y = "Editing rate in treated sample") +
+  facet_wrap(vars(SampleName), ncol=1)
+```
+
+
+
+#### Volcano plots
+
+Note: remove the sample with z score >60
+
+```{r, fig.width=8, fig.height=12}
+
+# Creat p value column on the basis of a 2 sided test conversion:
+annotated_dif_data <- annotated_dif_data %>% 
+  mutate(p_value = 2* pnorm(q= abs(z.score), lower.tail=FALSE ))
+
+
+annotated_dif_data %>% 
+  ggplot(aes(x= log10(treat_untreat_ratio), y= -log10(p_value), color = sig_edit)) +
+  geom_point(size=0.3, alpha=0.4) +
+  scale_color_manual(values = rev(palette)) +
+  theme_bw() +
+   facet_wrap(vars(SampleName), ncol=1)
+```
+
+### Editing rate difference does not correlate with editing rate ratio (note not sure how best to 'log transform' the x axis with the editing difference metric)
+
+```{r, fig.height=6, fig.width=6, warning=F}
+annotated_dif_data %>% 
+  ggplot(aes(x = treat_untreat_dif, y = treat_untreat_ratio, color = sig_edit)) +
+  geom_point(size = 0.4, alpha = 0.2) +
+  scale_color_manual(values = rev(palette)) +
+  scale_y_continuous(trans='log10') +
+  theme_bw() +
+  facet_wrap(vars(SampleName), ncol=1)
+```
+
+
+## Significant edit sites: z_score_cuttoff >= 1.96
+
+```{r}
+z_score_cuttoff = 1.96
+sig_annotated_dif_data <- annotated_dif_data %>% 
+  dplyr::filter(sig_edit == "significant")
+
+annotated_dif_data
+
+sig_annotated_dif_data
+```
+
+
+
+
+## Summary of increased and decreased edits per sample
+
+Note - this is the annotated differential data. This loses 161 editing sites, presumably those that are not in routine chromosomes.
+
+
+```{r, fig.width = 8, fig.height=12}
+sig_annotated_dif_data_summary <- sig_annotated_dif_data %>%
+  group_by(Sample) %>%
+  summarise(`Total_increased` = sum(treat_untreat_ratio >=1),
+            `Total_decreased` = sum(treat_untreat_ratio <=1),
+            `New_edit_sites` = sum(treat_untreat_ratio == Inf),
+            `Lost_edit_sites` = sum(treat_untreat_ratio == 0)) %>% 
+   arrange(desc(grepl("Astrocyte", Sample)))
+
+
+sig_annotated_dif_table <- sig_annotated_dif_data_summary %>% 
+  mutate(Increased_editing = Total_increased - New_edit_sites,
+         Decreased_editing = Total_decreased - Lost_edit_sites) %>% 
+  dplyr::select(-Total_increased, -Total_decreased) 
+
+sig_annotated_dif_table
+
+
+
+sig_annotated_dif_table %>% 
+  pivot_longer(data = .,
+               cols = c(Increased_editing, New_edit_sites, Decreased_editing, Lost_edit_sites ),
+               names_to = 'Change_category',
+               values_to = 'Number_of_edits') %>% 
+  ggplot(aes(x=Change_category, y = Number_of_edits, fill = Change_category)) +
+  geom_bar(stat = "identity") +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme_bw() +
+  labs(title = "Counts of differentially edited sites", y = "Number of editing sites", x = NULL) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  facet_wrap(vars(Sample), ncol=1) 
+  
+
+
+```
+
+
+
+
+
+
+# 4) Cluster profiler: Gene set enrichment analysis of differentially edited genes
+
+I will take use the treated verse untreated editing rate difference as the metric here (ie, editing rate of the treated sample at the site - editing rate of untreated sample at the site). The other option is the ratio but this seems prone to inflation (eg going from 0 in untreated to a very small amount of editing in treated gives a ratio of infinity). Or could use the z score which is a proxy for p value.
+\
+
+Note:
+
+* In the top 26 sites with the greatest editing rate difference, the gene MYC appears 15 times
+* Using a editing difference cuttoff of 0.04 only gives 2 GO terms relating to tRNA methyltransferase
+\
+\
+
+I will use all increased and decreased editing differences or ratios for this analysis. Of note:
+
+* The increased or decreased editing rate differences includes those new sites or lost sites respectively. The increased/decreased editing rate ratio is very similar as there is no additional ratio/difference cuttoff, but does not include new/lost sites.
+* New sites are defined by editing ratios of infinity, and lost sites by editing ratios of zero.
+* GO Enrichment is performed comparing to all genes in the ensembl 38.97 gtf, with all ontogenies (hence some double up in GO terms), and a p value cuttoff at 0.05.
+
+
+
+## Cluster profiler of all samples together using compareCluster:
+
+
+
+
+```{r}
+
+gtf_gene_universe <- reduced_ensembl_range$gene_id %>% 
+  as_vector() %>% 
+  unique()
+
+# Create gene universes for comparison with cluster profiler, using all editing sites without z score filter:
+astro_gene_universe <- annotated_dif_data %>% 
+  dplyr::filter(Sample == "Astrocyte") %>% 
+  dplyr::select(gene_id) %>% 
+  as_vector() %>% 
+  unique()
+
+cocult_gene_universe <- annotated_dif_data %>% 
+  dplyr::filter(Sample == "Coculture") %>% 
+  dplyr::select(gene_id) %>% 
+  as_vector() %>% 
+  unique()
+
+neuron_gene_universe <- annotated_dif_data %>% 
+  dplyr::filter(Sample == "Neuron") %>% 
+  dplyr::select(gene_id) %>% 
+  as_vector() %>% 
+  unique()
+
+annotated_dif_data %>% 
+  dplyr::filter(Sample == "Neuron") %>% 
+  distinct(gene_id)
+
+```
+
+
+
+```{r}
+astro_dif_down_genes <- sig_annotated_dif_data %>% 
+  dplyr::filter(Sample == 'Astrocyte',
+               treat_untreat_dif < 0.00) %>%
+  .$gene_id %>% 
+  unique() %>% 
+  na.omit()
+
+  
+astro_dif_up_genes <- sig_annotated_dif_data %>% 
+  dplyr::filter(Sample == 'Astrocyte',
+               treat_untreat_dif > 0.00) %>%
+  .$gene_id %>% 
+  unique() %>% 
+  na.omit()
+
+astro_intersect_genes <- intersect(astro_dif_up_genes, astro_dif_down_genes)
+
+astro_dif_up_genes_unique <- setdiff(astro_dif_up_genes, astro_intersect_genes)
+astro_dif_down_genes_unique <- setdiff(astro_dif_down_genes, astro_intersect_genes)
+
+
+```
+
+
+```{r}
+neuron_dif_down_genes <- sig_annotated_dif_data %>% 
+  dplyr::filter(Sample == 'Neuron',
+               treat_untreat_dif < 0.00) %>%
+  .$gene_id %>% 
+  unique() %>% 
+  na.omit()
+
+neuron_dif_up_genes <- sig_annotated_dif_data %>% 
+  dplyr::filter(Sample == 'Neuron',
+               treat_untreat_dif > 0.00) %>%
+  .$gene_id %>% 
+  unique() %>% 
+  na.omit()
+
+
+neuron_intersect_genes <- intersect(neuron_dif_up_genes, neuron_dif_down_genes)
+
+neuron_dif_up_genes_unique <- setdiff(neuron_dif_up_genes, neuron_intersect_genes)
+neuron_dif_down_genes_unique <- setdiff(neuron_dif_down_genes, neuron_intersect_genes)
+
+```
+
+
+```{r}
+cocult_dif_down_genes  <- sig_annotated_dif_data %>% 
+  dplyr::filter(Sample == 'Coculture',
+               treat_untreat_dif < 0.00) %>%
+  .$gene_id %>% 
+  unique() %>% 
+  na.omit()
+
+cocult_dif_up_genes <- sig_annotated_dif_data %>% 
+  dplyr::filter(Sample == 'Coculture',
+               treat_untreat_dif > 0.00) %>%
+  .$gene_id %>% 
+  unique() %>% 
+  na.omit()
+
+cocult_intersect_genes <- intersect(cocult_dif_up_genes, cocult_dif_down_genes)
+
+cocult_dif_up_genes_unique <- setdiff(cocult_dif_up_genes, cocult_intersect_genes)
+cocult_dif_down_genes_unique <- setdiff(cocult_dif_down_genes, cocult_intersect_genes)
+
+```
+
+### Cluster profiler with genes that might overlap (have increased and decreased edits in the same gene)
+
+```{r}
+compare_list <- list(astrocyte_down = astro_dif_down_genes, 
+                     astrocyte_up = astro_dif_up_genes,
+                     coculture_down = cocult_dif_down_genes, 
+                     coculture_up = cocult_dif_up_genes,
+                     neuron_down = neuron_dif_down_genes, 
+                     neuron_up = neuron_dif_up_genes)
+
+summary_list <- list(astrocyte_down = astro_dif_down_genes, 
+                     astrocyte_up = astro_dif_up_genes,
+                     coculture_down = cocult_dif_down_genes, 
+                     coculture_up = cocult_dif_up_genes,
+                     neuron_down = neuron_dif_down_genes, 
+                     neuron_up = neuron_dif_up_genes,
+                     astro_gene_universe = astro_gene_universe,
+                     cocult_gene_universe = cocult_gene_universe,
+                     neuron_gene_universe = neuron_gene_universe)
+
+str(summary_list)
+saveRDS(summary_list, "../processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/sample_gene_list_universe.rds")                     
+str(compare_list)
+```
+
+#### All 3 cell lines, increased and decreased editing differences
+
+
+```{r, fig.height=16, fig.width = 12}
+# With p value cuttoff 0.8
+trial_list <- compare_list[1:6]
+overall_universe <- c(astro_gene_universe, neuron_gene_universe, cocult_gene_universe) %>% 
+  unique()
+
+cluster_comparisons <- compareCluster(geneCluster = trial_list,
+               universe = overall_universe,
+               fun = "enrichGO",
+               OrgDb = "org.Hs.eg.db",
+               ont = "BP" ,
+               keyType = "ENSEMBL",
+               readable = TRUE,
+               pvalueCutoff = 0.8,
+               qvalueCutoff = 0.8)
+
+
+dotplot(cluster_comparisons) +
+          labs(title = "Cluster comparison of increased and decreased editing differences",
+             subtitle = "Astrocytes, neurons and coculture, p value < 0.8, q value < 0.8") +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+```{r}
+cluster_comparisons@compareClusterResult %>% 
+  dplyr::select(Cluster, ID, Description, geneID)
+```
+
+
+
+
+```{r, fig.height=12, fig.width = 12}
+
+cluster_comparisons <- compareCluster(geneCluster = trial_list,
+               universe = overall_universe,
+               fun = "enrichGO",
+               OrgDb = "org.Hs.eg.db",
+               ont = "BP" ,
+               keyType = "ENSEMBL",
+               readable = TRUE,
+               pvalueCutoff = 0.05,
+               qvalueCutoff = 0.05)
+
+
+
+dotplot(cluster_comparisons) +
+          labs(title = "Cluster comparison of increased and decreased editing differences",
+             subtitle = "Astrocytes, neurons and coculture, p value < 0.05, q value < 0.05")
+
+```
+
+```{r}
+
+cluster_comparisons@compareClusterResult %>% 
+  dplyr::select(Cluster, ID, Description, geneID)
+```
+
+
+#### Astrocyte treat verse untreat
+
+
+```{r, fig.height=12, fig.width = 12}
+
+trial_list <- compare_list[1:2]
+
+cluster_comparisons <- compareCluster(geneCluster = trial_list,
+               universe = astro_gene_universe,
+               fun = "enrichGO",
+               OrgDb = "org.Hs.eg.db",
+               ont = "BP" ,
+               keyType = "ENSEMBL",
+               readable = TRUE,
+               pvalueCutoff = 0.3,
+               qvalueCutoff = 0.3)
+
+
+dotplot(cluster_comparisons) +
+            labs(title = "Cluster comparison of increased and decreased editing differences",
+             subtitle = "Astrocytes p value < 0.03, q value < 0.03")
+
+```
+
+
+```{r}
+cluster_comparisons@compareClusterResult %>% 
+  dplyr::select(Cluster, ID, Description, geneID)
+```
+
+
+#### Cocult treat verse untreat
+
+```{r, fig.height=12, fig.width = 12}
+
+trial_list <- compare_list[3:4]
+
+cluster_comparisons <- compareCluster(geneCluster = trial_list,
+               universe = cocult_gene_universe,
+               fun = "enrichGO",
+               OrgDb = "org.Hs.eg.db",
+               ont = "BP" ,
+               keyType = "ENSEMBL",
+               readable = TRUE,
+               pvalueCutoff = 0.3,
+               qvalueCutoff = 0.3)
+
+
+dotplot(cluster_comparisons) +
+            labs(title = "Cluster comparison of increased and decreased editing differences",
+             subtitle = "Coculture p value < 0.03, q value < 0.03")
+
+```
+
+
+```{r}
+cluster_comparisons@compareClusterResult %>% 
+  dplyr::select(Cluster, ID, Description, geneID)
+```
+
+#### Neuron treat verse untreat
+
+```{r, fig.height=12, fig.width = 12}
+
+str(compare_list)
+trial_list <- compare_list[5:6]
+
+cluster_comparisons <- compareCluster(geneCluster = trial_list,
+               universe = neuron_gene_universe,
+               fun = "enrichGO",
+               OrgDb = "org.Hs.eg.db",
+               ont = "BP" ,
+               keyType = "ENSEMBL",
+               readable = TRUE,
+               pvalueCutoff = 1,
+               qvalueCutoff = 1)
+
+
+dotplot(cluster_comparisons) +
+            labs(title = "Cluster comparison of increased and decreased editing differences",
+             subtitle = "Neuron p value < 1, q value < 1")
+
+```
+
+
+### Cluster profiler with exclusively up or down genes
+
+
+```{r}
+compare_list <- list(astrocyte_down = astro_dif_down_genes_unique, 
+                     astrocyte_up = astro_dif_up_genes_unique,
+                     coculture_down = cocult_dif_down_genes_unique, 
+                     coculture_up = cocult_dif_up_genes_unique,
+                     neuron_down = neuron_dif_down_genes_unique, 
+                     neuron_up = neuron_dif_up_genes_unique)
+
+summary_list <- list(astrocyte_down = astro_dif_down_genes, 
+                     astrocyte_up = astro_dif_up_genes,
+                     coculture_down = cocult_dif_down_genes, 
+                     coculture_up = cocult_dif_up_genes,
+                     neuron_down = neuron_dif_down_genes, 
+                     neuron_up = neuron_dif_up_genes,
+                     astro_gene_universe = astro_gene_universe,
+                     cocult_gene_universe = cocult_gene_universe,
+                     neuron_gene_universe = neuron_gene_universe)
+
+str(summary_list)
+saveRDS(summary_list, "../processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/sample_gene_list_universe.rds")                     
+str(compare_list)
+```
+
+#### All 3 cell lines, increased and decreased editing differences
+
+
+```{r, fig.height=8, fig.width = 6}
+# With p value cuttoff 0.8
+trial_list <- compare_list[1:6]
+overall_universe <- c(astro_gene_universe, neuron_gene_universe, cocult_gene_universe) %>% 
+  unique()
+
+cluster_comparisons <- compareCluster(geneCluster = trial_list,
+               universe = overall_universe,
+               fun = "enrichGO",
+               OrgDb = "org.Hs.eg.db",
+               ont = "BP" ,
+               keyType = "ENSEMBL",
+               readable = TRUE,
+               pvalueCutoff = 0.8,
+               qvalueCutoff = 0.8)
+
+
+dotplot(cluster_comparisons) +
+          labs(title = "Cluster comparison of increased and decreased editing differences",
+             subtitle = "Astrocytes, neurons and coculture, p value < 0.8, q value < 0.8") +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+```{r}
+cluster_comparisons@compareClusterResult %>% 
+  dplyr::select(Cluster, ID, Description, geneID)
+```
+
+
+
+
+
+#### Astrocyte treat verse untreat
+
+
+```{r, fig.height=6, fig.width = 6}
+
+trial_list <- compare_list[1:2]
+
+cluster_comparisons <- compareCluster(geneCluster = trial_list,
+               universe = astro_gene_universe,
+               fun = "enrichGO",
+               OrgDb = "org.Hs.eg.db",
+               ont = "BP" ,
+               keyType = "ENSEMBL",
+               readable = TRUE,
+               pvalueCutoff = 0.5,
+               qvalueCutoff = 0.5)
+
+
+dotplot(cluster_comparisons) +
+            labs(title = "Cluster comparison of increased and decreased editing differences",
+             subtitle = "Astrocytes p value < 0.5, q value < 0.5")
+
+```
+
+
+```{r}
+cluster_comparisons@compareClusterResult %>% 
+  dplyr::select(Cluster, ID, Description, geneID)
+```
+
+
+#### Cocult treat verse untreat
+
+```{r, fig.height=6, fig.width = 6}
+
+trial_list <- compare_list[3:4]
+
+cluster_comparisons <- compareCluster(geneCluster = trial_list,
+               universe = cocult_gene_universe,
+               fun = "enrichGO",
+               OrgDb = "org.Hs.eg.db",
+               ont = "BP" ,
+               keyType = "ENSEMBL",
+               readable = TRUE,
+               pvalueCutoff = 0.3,
+               qvalueCutoff = 0.3)
+
+
+dotplot(cluster_comparisons) +
+            labs(title = "Cluster comparison of increased and decreased editing differences",
+             subtitle = "Coculture p value < 0.03, q value < 0.03")
+
+```
+
+
+```{r}
+cluster_comparisons@compareClusterResult %>% 
+  dplyr::select(Cluster, ID, Description, geneID)
+```
+
+#### Neuron treat verse untreat
+
+```{r, fig.height=6, fig.width = 6}
+
+
+trial_list <- compare_list[5:6]
+
+cluster_comparisons <- compareCluster(geneCluster = trial_list,
+               universe = neuron_gene_universe,
+               fun = "enrichGO",
+               OrgDb = "org.Hs.eg.db",
+               ont = "BP" ,
+               keyType = "ENSEMBL",
+               readable = TRUE,
+               pvalueCutoff = 1,
+               qvalueCutoff = 1)
+
+
+dotplot(cluster_comparisons) +
+            labs(title = "Cluster comparison of increased and decreased editing differences",
+             subtitle = "Neuron p value < 1, q value < 1")
+
+```
+
+```{r}
+cluster_comparisons@compareClusterResult %>% 
+  dplyr::select(Cluster, ID, Description, geneID)
+```
+
+
+
+
+## Exploring all individual possibilities with cluster profiler
+
+See separate pdf's generated
+
+
+```{r}
+filters <- c("treat_untreat_dif < 0.00",
+             "treat_untreat_dif > 0.00",
+             "treat_untreat_ratio !=0 & treat_untreat_ratio < 1", 
+             "treat_untreat_ratio != Inf & treat_untreat_ratio> 1",
+             "treat_untreat_ratio == 0",
+             "treat_untreat_ratio == Inf")
+
+filter_name <- c("Decreased_editing_rate_difference",
+                 "Increased_editing_rate_difference",
+                 "Decreased_editing_rate_ratio",
+                 "Increased_editing_rate_ratio",
+                 "New_editing_sites",
+                 "Lost_editing_sites")
+
+filter_list <- cbind(filter_name, filters) %>% 
+  as_tibble
+
+sample_names <- c("Astrocyte", "Coculture", "Neuron")
+sample_names <- c("Neuron")
+
+```
+
+
+
+```{r}
+enrichment_list <- list()
+
+for (sample_name in sample_names) {
+    for (filter_number in 1:dim(filter_list)[1]) {
+
+      sample_name <- "Neuron"
+      filter_number <- 2
+
+      filter_name <- filter_list[filter_number, 'filter_name']
+      filter <- filter_list[filter_number, 'filters']
+      enrich_title = str_c(sample_name, "_", filter_name)
+      
+      print(str_c("Sample: ", sample_name))
+      print(filter_number)
+      print(str_c("Filter name:", filter_name))
+      print(str_c("Filter:", filter))
+      print(enrich_title)
+      
+      filtered_data <- sig_annotated_dif_data %>% 
+                                        filter(Sample == sample_name) %>% 
+                                        filter(eval(parse(text = `filter`)))
+      
+      enrichment_plot <- GOenrichment(filtered_data)
+                                      
+      
+      enrichment_plot <- enrichment_plot +
+        labs(title = sample_name,
+             subtitle = filter_name)
+      
+      ggsave(plot =enrichment_plot, dpi = 300,
+         filename = str_c("../processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/GOenrichment/", enrich_title, ".pdf"))
+      
+      assign(enrich_title,
+             list("Filtered Data" = filtered_data,
+                  "Enrichment Plot" = enrichment_plot)
+             )
+      
+        # Combine lists to allow for comparisons
+      enrichment_list[[enrich_title]] <- eval(as.name(enrich_title))
+    }
+}
+
+```
+
+```{r}
+saveRDS(enrichment_list, "../processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/summary_GOenrichment_6filters.rds")
+
+
+enrichment_list <- readRDS("../processed_data/astro_neuro_coculture/astro_neuro_editing_16mismatch_QC/summary_GOenrichment_6filters.rds")
+
+```
+
+```{r}
+enrichment_list$Astrocyte_Decreased_editing_rate_difference$`Filtered Data`
+```
+
+
+# 6) RNA locate
+
+```{r}
+RNA_locations <- read_tsv("../references/All_RNA_subcellular_localization_data.txt")
+RNA_locations <- RNA_locations %>% 
+  filter(Species == "Homo sapiens")
+
+```
+
+
+
+
+# 5) Scratch
+
+## Histograms - note these remove infinity values
+
+
+```{r}
+dim(annotated_dif_data)
+dim(all_dif_data)
+```
+
+
+```{r, fig.width = 6, fig.height=12}
+annotated_dif_data %>% 
+  ggplot(aes(x=treat_untreat_ratio)) +
+  scale_x_continuous(trans='log10') +
+  geom_histogram(fill = palette[1], bins=50) +
+  theme_bw() +
+  facet_wrap(vars(SampleName), ncol=1)
+```
+
+
+
+## Scatterplot of significant edits
+
+
+### Exploring which genes have differential editing
+
+#### By gene type
+
+```{r}
+annotated_dif_data %>% 
+  ggplot(., aes(x=gene_type, fill=gene_type)) +
+  geom_bar() +
+  theme_bw() +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+```{r, fig.width=6, fig.height=9}
+annotated_dif_data %>% 
+  ggplot(., aes(x=gene_type, fill=gene_type)) +
+  geom_bar() +
+  theme_bw() +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  facet_wrap(vars(SampleName), ncol=1)
+```
+
+#### By repeat class
+
+```{r, fig.width = 9, fig.height=6}
+annotated_dif_data %>% 
+  ggplot(., aes(x=repeat_class, fill = repeat_class)) +
+  geom_bar() +
+    scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+
+```{r, fig.width=10, fig.height=9}
+annotated_dif_data %>% 
+  ggplot(., aes(x=repeat_class, fill = repeat_class)) +
+  geom_bar() +
+  theme_bw() +
+   scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme(axis.text.x = element_text(angle = 90)) +
+    facet_wrap(vars(SampleName), ncol=1)
+
+```
+
+
+#### By gene biotype
+
+```{r, fig.width = 9, fig.height=6}
+annotated_dif_data %>% 
+  ggplot(., aes(x=gene_biotype, fill = gene_biotype)) +
+  geom_bar() +
+    scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+
+```{r, fig.width=10, fig.height=9}
+annotated_dif_data %>% 
+  ggplot(., aes(x=gene_biotype, fill = gene_biotype)) +
+  geom_bar() +
+  theme_bw() +
+   scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme(axis.text.x = element_text(angle = 90)) +
+    facet_wrap(vars(SampleName), ncol=1)
+
+```
+
+
+
+### Exploring which genes have infinitely increased editing when treated with alph asyn
+
+```{r}
+annotated_dif_data %>% 
+  filter(treat_untreat_ratio=='Inf')
+
+```
+
+#### By gene name
+
+```{r}
+annotated_dif_data %>% 
+  filter(treat_untreat_ratio=='Inf') %>% 
+  select(gene_name) %>% 
+  distinct()
+
+```
+
+#### By gene type
+
+```{r}
+annotated_dif_data %>% 
+  filter(treat_untreat_ratio=='Inf') %>% 
+  ggplot(., aes(x=gene_type, fill=gene_type)) +
+  geom_bar() +
+  theme_bw() +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+```{r, fig.width=6, fig.height=9}
+annotated_dif_data %>% 
+  filter(treat_untreat_ratio=='Inf') %>% 
+  ggplot(., aes(x=gene_type, fill=gene_type)) +
+  geom_bar() +
+  theme_bw() +
+  scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  facet_wrap(vars(SampleName), ncol=1)
+```
+
+#### By repeat class
+
+```{r, fig.width = 9, fig.height=6}
+annotated_dif_data %>% 
+  filter(treat_untreat_ratio=='Inf') %>% 
+  ggplot(., aes(x=repeat_class, fill = repeat_class)) +
+  geom_bar() +
+    scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+
+```{r, fig.width=10, fig.height=9}
+annotated_dif_data %>% 
+  filter(treat_untreat_ratio=='Inf') %>% 
+  ggplot(., aes(x=repeat_class, fill = repeat_class)) +
+  geom_bar() +
+  theme_bw() +
+   scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme(axis.text.x = element_text(angle = 90)) +
+    facet_wrap(vars(SampleName), ncol=1)
+
+```
+
+
+#### By gene biotype
+
+```{r, fig.width = 9, fig.height=6}
+annotated_dif_data %>% 
+  filter(treat_untreat_ratio=='Inf') %>% 
+  ggplot(., aes(x=gene_biotype, fill = gene_biotype)) +
+  geom_bar() +
+    scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+
+```{r, fig.width=10, fig.height=9}
+annotated_dif_data %>% 
+  filter(treat_untreat_ratio=='Inf') %>% 
+  ggplot(., aes(x=gene_biotype, fill = gene_biotype)) +
+  geom_bar() +
+  theme_bw() +
+   scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           direction = 1) +
+  theme(axis.text.x = element_text(angle = 90)) +
+    facet_wrap(vars(SampleName), ncol=1)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+

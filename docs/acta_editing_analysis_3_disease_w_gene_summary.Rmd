@@ -1,0 +1,2345 @@
+---
+title: "acta_editing_analysis_3_disease_w_gene_summary"
+author: 
+- name: "Aaron Wagen"
+  affiliation: UCL
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  bookdown::html_document2:
+    figure_caption: yes
+    code_folding: hide
+    theme: paper
+    highlight: haddock
+    df_print: paged
+    toc: true
+    toc depth: 3
+    toc_float: true
+    number_sections: true
+  md_document:
+    variant: markdown_github
+    toc: true
+    number_sections: true
+always_allow_html: true
+link-citations: true
+notes-after-punctuation: false
+---
+
+
+```{r setup, include = FALSE}
+library(here) # For project-specific paths
+library(tidyverse)
+library(GenomicRanges)
+library(plyranges)
+library(paletteer)
+library(patchwork)
+library(paletteer)
+library(ggtranscript)
+library(GGally)
+library(clusterProfiler)
+library(imager)
+library(broom)
+library(ggforce)
+library(tidycat)
+library(performance)
+library(MASS)
+
+
+knitr::opts_chunk$set(echo = T, warning = F, message = F)
+
+# Set defaults for ggplots 
+theme_aw <- theme_bw(base_family = "Helvetica",
+           base_size = 12) + 
+  theme(panel.grid.major.x = element_blank(),
+        legend.position = "right",
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.title.y = element_text(vjust = 0.6),
+        panel.spacing = unit(0.1, "lines"))
+
+here::i_am("docs/acta_editing_analysis_3_disease_w_gene_summary.Rmd")
+
+# Load functions
+source(here::here("r_scripts",
+                  "r_functions.R"))
+
+source(here::here("r_scripts",
+                  "final_editing_functions_editing_summary_metric.R"))
+
+
+source(here::here("r_scripts",
+                  "filtering_args.R"))
+
+
+CORES=1
+
+palette = c("#2a75b2", "grey75", "#B0C6E7", "deeppink3")
+#palette = c("cyan4", "grey75")
+
+## Set options
+options(dplyr.summarise.inform = FALSE)
+options(lifecycle_verbosity = "warning")
+knitr::opts_chunk$set(echo = T, warning = F, message = F, out.width="100%", fig.align = "center", dpi = 100)
+```
+
+
+
+
+
+```{r load-theme, echo = F, results = "asis"}
+## Custom sciRmdTheme with increased width.
+## Please ask guillermorocamora@gmail.com for more details.
+sciRmdTheme::set.theme(
+  theme = "default",
+  color = NULL,
+  header.sticky = FALSE,
+  list.group.icon = "arrow",
+  font.family = "Arial",
+  font.color = "black",
+  header.color = "darkblue"
+)
+
+
+## Custom styles for the output html
+cat('
+<style type="text/css">
+.dataTables_scrollHeadInner{
+  width:100% !important;
+}
+.dataTables_scrollHeadInner table{
+  width:100% !important;
+}
+/*
+.code-folding-btn {
+  display: none;
+}
+*/
+h3, .h3 {
+  font-size: 22px!important;
+}
+h4, .h4 {
+  font-size: 18px!important;
+}
+h5, .h5 {
+  font-size: 16px!important;
+}
+body{
+  font-size: 13px;
+}
+pre {
+  line-height: 1;
+}
+.tocify-subheader {
+    text-indent: 15px;
+    display: none;
+    font-size: 12px;
+}
+</style>')
+
+
+```
+
+
+```{r}
+args <- list(
+  detect_summary_folder = here::here("jacusa2_detect/"),
+  sample_annotation_file = here::here("metadata.txt"),
+  qc_results_dir = here::here("processed_data"),
+  output_folder = here::here("processed_data"),
+  lengths_summary_path = here::here("genome_references/Homo_sapiens/GRCh38/annotation/ensembl93_gene_lengths_summary.csv"),
+  reduced_gtf = here::here("genome_reference/Homo_sapiens/GRCh38/annotation/ensembl93_reduced_gtf.RDS")
+)
+
+
+
+
+plot_labels = c("Decreased_editing" = "Decreased editing",
+                "Increased_editing" = "Increased editing",
+                "Lost_edit_sites" = "Lost editing sites",
+                "New_edit_sites" = "New editing sites",
+                "astro_nt_vs_asyn" = "Astrocyte untreated vs a-syn",
+                "neuron_nt_vs_asyn" = "Neuron untreated vs a-syn",
+                "cocult_nt_vs_asyn" = "Coculture untreated vs a-syn",
+                "astro_nt" = "Astrocyte untreated",
+                "astro_asyn" = "Astrocyte a-syn",
+                "cocult_nt" = "Coculture untreated",
+                "cocult_asyn" = "Coculture a-syn",
+                "neuron_nt" = "Neuron untreated",
+                "neuron_asyn" = "Neuron a-syn",
+                "exon" = "Exon",
+                "intron" = "Intron",
+                "intergenic" = "Intergenic",
+                "not_significant" = "Not significant",
+                "significant" = "Significant",
+                "Astrocyte_increase" = "Astrocyte increase",
+                "Astrocyte_decrease" = "Astrocyte decrease",
+                "Neuron_increase" = "Neuron increase",
+                "Neuron_decrease" = "Neuron decrease",
+                "Coculture_increase" = "Coculture increase",
+                "Coculture_decrease" = "Coculture decrease",
+                "no_treatment" = "Baseline",
+                "increase" = "Increase",
+                "decrease" = "Decrease",
+                "increased_sites" = "Increased editing rate",
+                "decreased_sites" = "Decreased editing rate",
+                "treated_edits" = "a-syn",
+                "untreated_edits" = "Untreated",
+                "exon" = "Exon",
+                "intron" = "Intron",
+                "intergenic" = "Intergenic",
+                "increased" = "Increase",
+                "decreased" = "Decreased"
+                )
+
+plot_labeller = as_labeller(plot_labels)
+
+
+
+named_palette = c(
+  increased_sites = "deeppink3",
+  New = "deeppink3",
+  increased = "deeppink3",
+  new_sites = "hotpink1",
+  decreased_sites = "#2a75b2",
+  Lost = "#2a75b2",
+  decreased = "#2a75b2",
+  lost_sites = "lightskyblue",
+  astro_nt = "#7FDEEA",
+  astro_asyn = "#0097A6",
+  neuron_nt = "#FF91C8",
+  neuron_asyn = "deeppink3",
+  cocult_nt = "#9FA7D8",
+  cocult_asyn = "#303F9F",
+  Control = "#1d9064",
+  no_treatment = "#1d9064",
+  DLB = "#ce490a",
+  PD  = "#625aa4",
+  `1uM_syn_oligomer`= "#625aa4",
+  PDD = "#de0077",
+    exon = "#fc6a0f",
+  intron = "#9db8e0",
+  intergenic = "#1a62a5"
+)
+
+```
+
+
+## Background data re samples
+
+Sample annotation and information
+
+```{r}
+# Load gene lengths
+gene_lengths <- read_delim(args$lengths_summary_path)
+
+editing_metrics <- c("Edits", "edit_adjusted")
+outcome_to_explore = "Disease_Group"
+covariates_used = c("RIN", "Sex")
+
+```
+
+
+```{r}
+# Load annotation file
+metadata <- read_delim(args$sample_annotation_file)
+metadata <- metadata %>% 
+   dplyr::select(Sample = sample_name, Disease_Group, Sex, AoO, AoD, DD, PMI, RIN = RINe_bulkRNA_Tapestation, aSN, TAU, AB = `thal AB`, aCG_aSN_score = `aCG aSN score`) %>% 
+  dplyr::mutate(sample_id = Sample)
+```
+
+
+Samples per disease group
+
+
+
+```{r, fig.width = 16, fig.height = 7}
+RIN_bar <- metadata %>% 
+  ggplot(aes(x=Sample, y = RIN, fill = Disease_Group)) +
+  geom_bar(stat = "identity") +
+  theme_aw +
+    scale_fill_manual(values = named_palette) + 
+  labs(title = "Samples RIN")
+  
+
+AOD_bar <- metadata %>% 
+  ggplot(aes(x=Sample, y = AoD, fill = Disease_Group)) +
+  geom_bar(stat = "identity") +
+  theme_aw +
+      scale_fill_manual(values = named_palette) + 
+  labs(title = "Age of death")
+
+PMI_bar <- metadata %>% 
+  ggplot(aes(x=Sample, y = PMI, fill = Disease_Group)) +
+  geom_bar(stat = "identity") +
+  theme_aw +
+      scale_fill_manual(values = named_palette) + 
+  labs(title = "Post mortem interval")
+
+sex_bar <- metadata %>% 
+  ggplot(aes(x=Disease_Group, fill = Sex)) +
+  geom_bar(stat = "count",
+           position = "stack") +
+  theme_aw +
+      scale_fill_paletteer_d("werpals::pan",
+                        direction = -1) +
+  labs(title = "Samples: sex")
+
+
+
+(RIN_bar | AOD_bar | PMI_bar | sex_bar | plot_layout(guides = "collect", widths = c(2,2,2,1)))
+
+```
+
+
+```{r}
+# Load file of significant results
+# master_df <- readRDS(args$detect_summary_comparison_sig_file)
+# master_df$Disease_Group <- factor(master_df$Disease_Group)
+```
+
+# Load edit site files
+
+```{r}
+edit_sites_files <- list.files(args$detect_summary_folder,
+                               pattern = ".site_edits.csv",
+                              full.names = T)
+
+
+load_edit_sites <- function(file_path, metadata_df) {
+  sites <- read_delim(file_path)
+  sites <- sites %>% 
+    dplyr::filter(z.score <= -1.96 | z.score >= 1.96) %>% 
+    left_join(metadata,
+              by = c("Sample" = "sample_id"))
+  return(sites)
+}
+
+```
+
+
+
+```{r}
+contrasts = list(PD = c("Control", "PD"),
+                 DLB = c("Control", "DLB"),
+                 PDD = c("Control", "PDD"))
+region_to_explore <- NULL
+```
+
+
+
+# Results
+
+## Non fully edited sites
+```{r,  results = "asis", units = "cm", fig.width = 26, fig.height = 22}
+  
+for (contrast_number in 1:length(contrasts)) {
+    
+    contrast_to_explore <- contrasts[[contrast_number]]
+    # Generate Markdown header
+
+if (is.null(region_to_explore)){
+  cat("##", contrast_to_explore[1], " vs. ", contrast_to_explore[[2]], "\n\n")
+} else if (!is.null(region_to_explore)){
+  cat("##", region_to_explore, ":",  contrast_to_explore[1], " vs. ", contrast_to_explore[[2]], "\n\n")
+} 
+ 
+   # Analysis and plotting code for the current region and contrast
+    contrast_list <- list(Control = contrast_to_explore[1],
+                          Disease = contrast_to_explore[2])
+    disease = contrast_to_explore[2]
+    
+    print(str_c("Exploring ", region_to_explore, ": ", contrast_to_explore[1], " vs. ", contrast_to_explore[[2]]))
+    
+    
+    comparison_df <- filter_and_load_editing_results(metadata_df = metadata,
+                                                     edit_files_list = edit_sites_files,
+                                                     contrast_to_explore = contrast_to_explore,
+                                                     region_to_explore = region_to_explore
+    )
+    
+    # Replace NAs in genic type with intergenic, and create column of collapsed biotypes for plotting
+    comparison_df <- comparison_df %>%
+      dplyr::mutate(biotype_plots = as_factor(gene_biotype),
+                    gene_type = as_factor(gene_type) %>% fct_relevel(filtering_args$gtf_genic_type)) %>% 
+      remove_suffix_from_gene_id(., column = "gene_id")
+    
+    # Recode and reorder biotype levels for plotting
+    levels(comparison_df$biotype_plots) <- vep_levels_BIOTYPE
+
+    # Factorise locus
+    comparison_df$locus <- factor(comparison_df$locus)
+    
+    # Factorise disease group, checking levels in data match levels in factor to be
+    comparison_df$Disease_Group <- factor(comparison_df$Disease_Group)
+    dataframe_levels <- levels(comparison_df$Disease_Group)
+    if (!all(dataframe_levels %in% contrast_to_explore) && all(contrast_to_explore %in% dataframe_levels)) {
+      errorCondition("Supplied sorting factor does not match levels in data")
+    }
+    levels(comparison_df$Disease_Group) <- contrast_to_explore
+    
+    # Find sample counts and consequences for annotation later
+    sample_counts <- comparison_df %>%
+      distinct(Sample, Disease_Group) %>%
+      count(Disease_Group)
+    
+    loci_consequences <- comparison_df %>%
+      dplyr::select(locus, gene_name, biotype_plots, gene_type, repeat_class) %>%
+      dplyr::distinct(locus, .keep_all = T)
+    
+    # Filter by number of sites common within groups and between samples
+    sites_to_explore <- copy(comparison_df)
+    number_common_samples_per_group = 2
+    site_label <- "common_2_sample"
+    site_annotation <- "Sites common to 2 samples per group: "
+    
+    common_loci <- find_sites_loci_common_to_x_samples(sites_df = sites_to_explore,
+                                                       sample_counts_df = sample_counts,
+                                                       no_common_samples_per_site = number_common_samples_per_group )
+    
+    sites_subset <- filter_sites_by_locus_vector(sites_df = sites_to_explore,
+                                                 vector_of_loci = common_loci,
+                                                 factor_list = contrast_list)
+    
+
+      # Baseline plots: rate and site number
+    # edit_mean_rate_box <- create_box_plot_editing_metric_per_disease_group(edit_summary_df = sites_subset,
+    #                                                                        plotting_variable = "Edits") +
+    #   scale_y_continuous(trans = "identity") +
+    #   labs(subtitle = "Editing rate per sample")
+    
+    edit_mean_rate_histogram <- plot_residual_histogram(regression_df = sites_subset,
+                                                        resid_column = "Edits",
+                                                        fill_variable = "Disease_Group") +
+      labs(x = "Raw editing rate")
+    
+    
+    total_sites <- plot_site_number_boxplot(sites_subset)
+    
+    number_sites_per_sample <- sites_subset %>% 
+      count(Sample) %>% 
+      dplyr::rename(n_sites_per_sample = n)
+    
+    sites_subset <- sites_subset %>% 
+      left_join(number_sites_per_sample,
+                by = "Sample")
+    
+    
+    ###  Regression by sites #### 
+    lm_results_sites <- regress_editing(sites_df = sites_subset,
+                                        editing_metric = "Edits",
+                                        covariates = covariates_used,
+                                        factor_list = contrast_list,
+                                        outcome_measure = outcome_to_explore,
+                                        disease = disease)
+    
+
+    site_residual_histogram <- plot_residual_histogram(regression_df = lm_results_sites$sites_subset_residuals,
+                                                                resid_column = '.resid',
+                                                                fill_variable = 'Disease_Group') +
+      labs(subtitle = "Site residuals, no outcome")
+    
+    
+    mean_residual_histogram <-  plot_residual_histogram(regression_df = lm_results_sites$mean_residuals_df %>% 
+                                                          dplyr::mutate(Disease_Group = fct_recode(Disease_Group, !!disease := "Disease")),
+                                                                resid_column = 'mean_residuals_per_feature',
+                                                                fill_variable = 'Disease_Group') +
+      labs(subtitle = "Mean residuals per feature, no outcome")
+    
+    
+    sites_residual_histogram_with_outcome <-  plot_residual_histogram(regression_df = lm_results_sites$sites_subset_residuals_with_outcome,
+                                                                resid_column = '.resid',
+                                                                fill_variable = 'Disease_Group') +
+      labs(subtitle = "Site residuals, with outcome")
+    
+    
+    
+    forest_plot_sites <- create_forest_plot_from_lm(linear_model = lm_results_sites$lm_results_with_outcome,
+                                                    disease = disease) +
+      labs(title = "Regression of sites")
+    
+    
+    ## Compare baseline to change  for plotting
+    compare_baseline_df <- compare_proportions_baseline_altered(lm_results_list = lm_results_sites,
+                                                                loci_consequences = loci_consequences,
+                                                                factor_list = contrast_list)
+    genic_dif_plot <- plot_compare_proportions_baseline(compare_proportions_df = compare_baseline_df,
+                                                        metric_to_plot = "gene_type",
+                                                        fill_label = "Genic Location")
+    biotype_dif_plot <- plot_compare_proportions_baseline(compare_proportions_df = compare_baseline_df,
+                                                          metric_to_plot = "biotype_plots",
+                                                          fill_label = "Biotype")
+    
+    ### Create gene editing summary metric
+    gene_metric_df <- sites_subset %>%
+      get_editing_summary_metric(summary_df = .,
+                                 gene_lengths_df = gene_lengths,
+                                 outcome_measure = outcome_to_explore,
+                                 covariates = covariates_used,
+                                 factor_list = contrast_list) %>% 
+      left_join(.,
+                number_sites_per_sample,
+                by = "Sample")
+    
+    # Plot number of sites per gene
+    no_sites_boxplot <- create_box_plot_editing_metric_per_disease_group(edit_summary_df = gene_metric_df,
+                                                                         plotting_variable = "no_sites") +
+      scale_y_continuous(trans = "identity") +
+      labs(subtitle = "No sites per gene", x = NULL)
+    
+    # Define metrics and labels in a named list
+    editing_metrics <- list(
+      mean_adjusted = "Mean edits per gene",
+      no_sites_adjusted = "No. of sites per gene",
+      mean_over_exon_length_adjusted = "Mean over exon length",
+      mean_x_no_sites_adjusted = "Mean * No. of sites",
+      complete_mean_adjusted = "Complete metric / exon length",
+      complete_mean_genelength_adjusted = "Complete metric / gene length"
+    )
+    
+    # Use lapply to iterate over each metric and return a list of plots of various parts of the gene metric
+    forest_plots <- lapply(names(editing_metrics), function(edit_variable_to_plot) {
+      
+      edit_variable_label <- editing_metrics[[edit_variable_to_plot]]
+      
+      lm_results <- regress_editing(
+        sites_df = gene_metric_df,
+        editing_metric = edit_variable_to_plot,
+        covariates = covariates_used,
+        factor_list = contrast_list,
+        outcome_measure = outcome_to_explore,
+        disease = disease
+      )
+      
+      forest_plot <- create_forest_plot_from_lm(linear_model = lm_results$lm_results_with_outcome,
+                                                disease = disease) +
+        labs(title = edit_variable_label)
+      
+      return(forest_plot)
+    })
+    
+    # Name the list elements according to the editing metric names
+    names(forest_plots) <- names(editing_metrics)
+    title_forest <- title_plot("Regressions")
+    
+    all_forest_plots <- c(list(title_forest, forest_plot_sites = forest_plot_sites), forest_plots[names(editing_metrics)])
+    
+    
+    ### Run regression with covariates and metrics all scaled, and n_site_per_gene log transformed
+    sites_subset_scaled <- sites_subset %>% 
+      dplyr::mutate(RIN = scale(RIN))
+    
+    lm_results_sites_scaled <- regress_editing(sites_df = sites_subset_scaled,
+                                               editing_metric = "Edits",
+                                               covariates = c("n_sites_per_sample", covariates_used),
+                                               factor_list = contrast_list,
+                                               outcome_measure = outcome_to_explore,
+                                               disease = disease)
+    
+    forest_plot_sites_scaled <- create_forest_plot_from_lm(linear_model = lm_results_sites_scaled$lm_results_with_outcome,
+                                                           disease = disease) +
+      labs(title = "Regression of sites - scaled")
+    
+    gene_metric_df_scaled <- sites_subset_scaled %>%
+      get_editing_summary_metric_scaled(summary_df = .,
+                                 gene_lengths_df = gene_lengths,
+                                 outcome_measure = outcome_to_explore,
+                                 covariates = covariates_used,
+                                 factor_list = contrast_list) %>% 
+      left_join(.,
+                number_sites_per_sample,
+                by = "Sample")
+    
+    
+    # Use lapply to iterate over each metric and return a list of plots of various parts of the gene metric
+    forest_plots_scaled <- lapply(names(editing_metrics), function(edit_variable_to_plot) {
+      
+      edit_variable_label <- editing_metrics[[edit_variable_to_plot]]
+      
+      lm_results_scaled <- regress_editing(
+        sites_df = gene_metric_df_scaled,
+        editing_metric = edit_variable_to_plot,
+        covariates = c("n_sites_per_sample", covariates_used),
+        factor_list = contrast_list,
+        outcome_measure = outcome_to_explore,
+        disease = disease
+      )
+      
+      forest_plot_scaled <- create_forest_plot_from_lm(linear_model = lm_results_scaled$lm_results_with_outcome,
+                                                       disease = disease) +
+        labs(title = edit_variable_label)
+      
+      return(forest_plot_scaled)
+    })
+    
+    # Name the list elements according to the editing metric names
+    names(forest_plots_scaled) <- names(editing_metrics)
+    title_scaled <- title_plot("Scale site covariates \n and log10 nsites per gene")
+    
+    all_forest_plots_scaled <- c(list(title_scaled, forest_plot_sites = forest_plot_sites_scaled), forest_plots_scaled[names(editing_metrics)])
+    
+    
+    
+    
+    
+    ### Run regression covaried by n sites per sample
+    # Regression by number of sites + n_sites_per_sample
+    lm_results_sites_nsites <- regress_editing(sites_df = sites_subset,
+                                               editing_metric = "Edits",
+                                               covariates = c("n_sites_per_sample", covariates_used),
+                                               factor_list = contrast_list,
+                                               outcome_measure = outcome_to_explore,
+                                               disease = disease)
+    
+    forest_plot_sites_nsites <- create_forest_plot_from_lm(linear_model = lm_results_sites_nsites$lm_results_with_outcome,
+                                                           disease = disease) +
+      labs(title = "Regression of sites w site_no")
+    
+    
+     gene_metric_df <- sites_subset %>%
+      get_editing_summary_metric(summary_df = .,
+                                 gene_lengths_df = gene_lengths,
+                                 outcome_measure = outcome_to_explore,
+                                 covariates = covariates_used,
+                                 factor_list = contrast_list) %>% 
+      left_join(.,
+                number_sites_per_sample,
+                by = "Sample")
+    
+    # Use lapply to iterate over each metric and return a list of plots of various parts of the gene metric
+    forest_plots_nsites <- lapply(names(editing_metrics), function(edit_variable_to_plot) {
+      
+      edit_variable_label <- editing_metrics[[edit_variable_to_plot]]
+      
+      lm_results_nsites <- regress_editing(
+        sites_df = gene_metric_df,
+        editing_metric = edit_variable_to_plot,
+        covariates = c("n_sites_per_sample", covariates_used),
+        factor_list = contrast_list,
+        outcome_measure = outcome_to_explore,
+        disease = disease
+      )
+      
+      forest_plot_nsites <- create_forest_plot_from_lm(linear_model = lm_results_nsites$lm_results_with_outcome,
+                                                       disease = disease) +
+        labs(title = edit_variable_label)
+      
+      return(forest_plot_nsites)
+    })
+    
+    # Name the list elements according to the editing metric names
+    names(forest_plots_nsites) <- names(editing_metrics)
+    title_nsites <- title_plot("Regressions covaried \n for nsites per sample")
+    
+    all_forest_plots_nsites <- c(list(title_nsites, forest_plot_sites = forest_plot_sites_nsites), forest_plots_nsites[names(editing_metrics)])
+    
+    
+    
+    
+    
+    ### Create summary plot
+    cat("\n")
+    print(summary_plot <- (edit_mean_rate_histogram | total_sites | no_sites_boxplot |sites_residual_histogram_with_outcome | site_residual_histogram | mean_residual_histogram |  genic_dif_plot ) /
+            (Reduce(`|`, all_forest_plots)) +
+            (Reduce(`|`, all_forest_plots_scaled)) + 
+            (Reduce(`|`, all_forest_plots_nsites)) +
+            plot_layout(guides = "collect") +
+            plot_annotation(title = paste0(region_to_explore, " : ", disease, " verse control")))
+    
+    if (is.null(region_to_explore)){
+      ggsave(summary_plot,
+             file = here::here("figures/update_figures/",
+                               str_c(disease, ".png")),
+             device = "png",
+             units = "cm",
+             height = 44,
+             width = 60)  
+    } else if (!is.null(region_to_explore)){
+      ggsave(summary_plot,
+             file = here::here("figures/update_figures/",
+                               str_c(region_to_explore, "_", disease, ".png")),
+             device = "png",
+             units = "cm",
+             height = 44,
+             width = 60)  
+    } 
+    
+
+    
+    
+    cat("\n\n")
+
+}
+``` 
+
+
+## Fully edited sites
+
+
+```{r, results = "asis", units = "cm", fig.height=16, fig.width=20}
+
+for (contrast_number in 1:length(contrasts)) {
+  
+  contrast_number =1
+  quantile_cuttoff <- 0.9
+  
+  contrast_to_explore <- contrasts[[contrast_number]]
+  # Generate Markdown header
+  
+  if (is.null(region_to_explore)){
+    cat("##", contrast_to_explore[1], " vs. ", contrast_to_explore[[2]], "\n\n")
+  } else if (!is.null(region_to_explore)){
+    cat("##", region_to_explore, ":",  contrast_to_explore[1], " vs. ", contrast_to_explore[[2]], "\n\n")
+  } 
+  
+  # Analysis and plotting code for the current region and contrast
+  contrast_list <- list(Control = contrast_to_explore[1],
+                        Disease = contrast_to_explore[2])
+  disease = contrast_to_explore[2]
+  
+  print(str_c("Exploring ", region_to_explore, ": ", contrast_to_explore[1], " vs. ", contrast_to_explore[[2]]))
+  
+  
+  comparison_df <- filter_and_load_editing_results(metadata_df = metadata,
+                                                   edit_files_list = edit_sites_files,
+                                                   contrast_to_explore = contrast_to_explore,
+                                                   region_to_explore = region_to_explore
+  )
+  
+  # Replace NAs in genic type with intergenic, and create column of collapsed biotypes for plotting
+  comparison_df <- comparison_df %>%
+    dplyr::mutate(biotype_plots = as_factor(gene_biotype),
+                  gene_type = as_factor(gene_type) %>% fct_relevel(filtering_args$gtf_genic_type)) %>% 
+    remove_suffix_from_gene_id(., column = "gene_id")
+  
+  # Recode and reorder biotype levels for plotting
+  levels(comparison_df$biotype_plots) <- vep_levels_BIOTYPE
+  
+  # Factorise locus
+  comparison_df$locus <- factor(comparison_df$locus)
+  
+  # Factorise disease group, checking levels in data match levels in factor to be
+  comparison_df$Disease_Group <- factor(comparison_df$Disease_Group)
+  dataframe_levels <- levels(comparison_df$Disease_Group)
+  if (!all(dataframe_levels %in% contrast_to_explore) && all(contrast_to_explore %in% dataframe_levels)) {
+    errorCondition("Supplied sorting factor does not match levels in data")
+  }
+  levels(comparison_df$Disease_Group) <- contrast_to_explore
+  
+  
+  outliers <- comparison_df %>% 
+    dplyr::filter(Edits == 1)
+  
+  
+  outlier_bar <- outliers %>% 
+    ggplot(aes(x = Disease_Group, fill = Disease_Group)) +
+    geom_bar(stat = "count") +
+    scale_fill_manual(values = named_palette) +
+    theme_aw +
+    labs(title = "100% edited sites")
+  
+  outlier_genic_type <- outliers %>% 
+    ggplot(aes(x = Disease_Group, fill = gene_type)) +
+    geom_bar(stat = "count", position = "fill") +
+    scale_fill_manual(values = named_palette) +
+    theme_aw +
+    labs(title = "100% edited sites", subtitle = "Genic location")
+  
+  
+  outlier_biotype <- outliers %>% 
+    ggplot(aes(x = Disease_Group, fill = biotype_plots)) +
+    geom_bar(stat = "count", position = "fill") +
+    scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           name = "Biotype",
+                           labels = plot_labels) +
+    theme_aw +
+    labs(title = "100% edited sites", subtitle = "Biotype")
+  
+  
+  
+  
+  
+  heatmap_data <- comparison_df %>%
+    group_by(gene_type, repeat_class) %>%
+    summarize(count = n()) %>% 
+    mutate(gene_type = factor(gene_type, levels = filtering_args$gtf_genic_type),
+           repeat_class = factor(repeat_class, levels = filtering_args$alu_repeat_levels))
+  
+  
+  
+  complete_correlation_plot <- ggplot(heatmap_data, aes(x = repeat_class, y = fct_rev(gene_type), fill = log10(count))) +
+    geom_tile() +
+    scale_fill_viridis() +  # Adjust color scale as needed
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+    labs(title = "Count of overlapping genic locations and repeat motifs", 
+         subtitle = "All editing sites",
+         x = "Repeat Class",
+         y = "Gene Type")
+  
+  
+  outlier_heatmap_data <- outliers %>%
+    group_by(gene_type, repeat_class) %>%
+    summarize(count = n()) %>% 
+    mutate(gene_type = factor(gene_type, levels = filtering_args$gtf_genic_type),
+           repeat_class = factor(repeat_class, levels = filtering_args$alu_repeat_levels))
+  
+  
+  outlier_correlation_plot <- ggplot(outlier_heatmap_data, aes(x = repeat_class, y = fct_rev(gene_type), fill = log10(count))) +
+    geom_tile() +
+    scale_fill_viridis() +  # Adjust color scale as needed
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+    labs(title = "Count of overlapping genic locations and repeat motifs", 
+         subtitle = "100% Edited sites",
+         x = "Repeat Class",
+         y = "Gene Type") 
+  
+  
+       ### Create summary plot
+    cat("\n")
+    
+    print(summary_plot <- (complete_correlation_plot) / (outlier_correlation_plot ) /
+            (outlier_bar | outlier_genic_type | outlier_biotype)) +
+      plot_annotation(title = paste0(region_to_explore, " : ", disease, " verse control"))
+          
+
+    if (is.null(region_to_explore)){
+      ggsave(summary_plot,
+             file = here::here("figures/update_figures/",
+                               str_c(disease, "_fully_edited_sites.png")),
+             device = "png",
+             units = "cm",
+             height = 44,
+             width = 60)  
+    } else if (!is.null(region_to_explore)){
+      ggsave(summary_plot,
+             file = here::here("figures/update_figures/",
+                               str_c(region_to_explore, "_", disease, "_fully_edited_sites.png")),
+             device = "png",
+             units = "cm",
+             height = 44,
+             width = 60)  
+    } 
+    
+
+    
+    
+    cat("\n\n")
+
+  
+   
+}
+
+```
+
+## New/lost sites
+
+```{r,  results = "asis", units = "cm", fig.height = 16, fig.width = 20}
+
+for (contrast_number in 1:length(contrasts)) {
+  
+  contrast_to_explore <- contrasts[[contrast_number]]
+  # Generate Markdown header
+  
+  if (is.null(region_to_explore)){
+    cat("##", contrast_to_explore[1], " vs. ", contrast_to_explore[[2]], "\n\n")
+  } else if (!is.null(region_to_explore)){
+    cat("##", region_to_explore, ":",  contrast_to_explore[1], " vs. ", contrast_to_explore[[2]], "\n\n")
+  } 
+  
+  # Analysis and plotting code for the current region and contrast
+  contrast_list <- list(Control = contrast_to_explore[1],
+                        Disease = contrast_to_explore[2])
+  disease = contrast_to_explore[2]
+  
+  print(str_c("Exploring ", region_to_explore, ": ", contrast_to_explore[1], " vs. ", contrast_to_explore[[2]]))
+  
+  
+  comparison_df <- filter_and_load_editing_results(metadata_df = metadata,
+                                                   edit_files_list = edit_sites_files,
+                                                   contrast_to_explore = contrast_to_explore,
+                                                   region_to_explore = region_to_explore
+  )
+  
+  # Replace NAs in genic type with intergenic, and create column of collapsed biotypes for plotting
+  comparison_df <- comparison_df %>%
+    dplyr::mutate(biotype_plots = as_factor(gene_biotype),
+                  gene_type = as_factor(gene_type) %>% fct_relevel(filtering_args$gtf_genic_type)) %>% 
+    remove_suffix_from_gene_id(., column = "gene_id")
+  
+  # Recode and reorder biotype levels for plotting
+  levels(comparison_df$biotype_plots) <- vep_levels_BIOTYPE
+  
+  # Factorise locus
+  comparison_df$locus <- factor(comparison_df$locus)
+  
+  # Factorise disease group, checking levels in data match levels in factor to be
+  comparison_df$Disease_Group <- factor(comparison_df$Disease_Group)
+  dataframe_levels <- levels(comparison_df$Disease_Group)
+  if (!all(dataframe_levels %in% contrast_to_explore) && all(contrast_to_explore %in% dataframe_levels)) {
+    errorCondition("Supplied sorting factor does not match levels in data")
+  }
+  levels(comparison_df$Disease_Group) <- contrast_to_explore
+  
+  # Find sample counts and consequences for annotation later
+  sample_counts <- comparison_df %>%
+    distinct(Sample, Disease_Group) %>%
+    count(Disease_Group)
+  
+  loci_consequences <- comparison_df %>%
+    dplyr::select(locus, gene_name, biotype_plots, gene_type, repeat_class) %>%
+    dplyr::distinct(locus, .keep_all = T)
+  
+  # Filter by number of sites common within groups and between samples
+  sites_to_explore <- copy(comparison_df)
+  number_common_samples_per_group = 2
+  site_label <- "common_2_sample"
+  site_annotation <- "Sites common to 2 samples per group: "
+  
+  
+  new_lost_sites <- find_new_lost_sites(sites_df = sites_to_explore,
+                                        sample_counts_df = sample_counts,
+                                        no_common_samples_per_site = number_common_samples_per_group ) %>% 
+    left_join(., loci_consequences,
+              by = "locus")
+  
+  
+  newlost_bar <- new_lost_sites %>% 
+    ggplot(aes(x = new_lost, fill = new_lost)) +
+    geom_bar(stat = "count") +
+    scale_fill_manual(values = named_palette) +
+    theme_aw +
+    labs(title = "100% edited sites")
+  
+  newlost_genic_type <- new_lost_sites %>% 
+    ggplot(aes(x = new_lost, fill = gene_type)) +
+    geom_bar(stat = "count", position = "fill") +
+    scale_fill_manual(values = named_palette) +
+    theme_aw +
+    labs(title = "100% edited sites", subtitle = "Genic location")
+  
+  
+  newlost_biotype <- new_lost_sites %>% 
+    ggplot(aes(x = new_lost, fill = biotype_plots)) +
+    geom_bar(stat = "count", position = "fill") +
+    scale_fill_paletteer_d("ggthemes::Classic_20",
+                           na.value = "grey90",
+                           name = "Biotype",
+                           labels = plot_labels) +
+    theme_aw +
+    labs(title = "100% edited sites", subtitle = "Biotype")
+  
+  
+  
+  
+  
+  heatmap_data <- comparison_df %>%
+    group_by(gene_type, repeat_class) %>%
+    summarize(count = n()) %>% 
+    mutate(gene_type = factor(gene_type, levels = filtering_args$gtf_genic_type),
+           repeat_class = factor(repeat_class, levels = filtering_args$alu_repeat_levels))
+  
+  
+  
+  complete_correlation_plot <- ggplot(heatmap_data, aes(x = repeat_class, y = fct_rev(gene_type), fill = log10(count))) +
+    geom_tile() +
+    scale_fill_viridis() +  # Adjust color scale as needed
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+    labs(title = "Count of overlapping genic locations and repeat motifs", 
+         subtitle = "All editing sites",
+         x = "Repeat Class",
+         y = "Gene Type")
+  
+  
+  newlost_heatmap_data <- new_lost_sites %>%
+    group_by(gene_type, repeat_class) %>%
+    summarize(count = n()) %>% 
+    mutate(gene_type = factor(gene_type, levels = filtering_args$gtf_genic_type),
+           repeat_class = factor(repeat_class, levels = filtering_args$alu_repeat_levels))
+  
+  
+  newlost_correlation_plot <- ggplot(newlost_heatmap_data, aes(x = repeat_class, y = fct_rev(gene_type), fill = log10(count))) +
+    geom_tile() +
+    scale_fill_viridis() +  # Adjust color scale as needed
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+    labs(title = "Count of overlapping genic locations and repeat motifs", 
+         subtitle = "100% Edited sites",
+         x = "Repeat Class",
+         y = "Gene Type") 
+  
+  
+   
+    
+       ### Create summary plot
+    cat("\n")
+    
+    print(summary_plot <- (complete_correlation_plot) / (newlost_correlation_plot ) /
+    (newlost_bar | newlost_genic_type | newlost_biotype)) +
+      plot_annotation(title = paste0(region_to_explore, " : ", disease, " verse control"))
+          
+
+    if (is.null(region_to_explore)){
+      ggsave(summary_plot,
+             file = here::here("figures/update_figures/",
+                               str_c(disease, "_newlost_sites.png")),
+             device = "png",
+             units = "cm",
+             height = 44,
+             width = 60)  
+    } else if (!is.null(region_to_explore)){
+      ggsave(summary_plot,
+             file = here::here("figures/update_figures/",
+                               str_c(region_to_explore, "_", disease, "_newlost_sites.png")),
+             device = "png",
+             units = "cm",
+             height = 44,
+             width = 60)  
+    } 
+    
+
+    
+    
+    cat("\n\n")
+
+  
+  
+  
+}
+
+```
+
+
+
+
+
+
+<!-- ```{r} -->
+
+<!-- disease = "PD" -->
+
+<!-- disease_groups = disease -->
+<!-- factor_levels = c("Control", disease) # Always list factor levels with control/untreated first. -->
+<!-- covariate_list = c("RIN", "Sex") -->
+<!-- outcome_to_explore = "Disease_Group" -->
+<!-- factor_list <- c(Control = "Control",  -->
+<!--                  setNames(list(disease), disease)) -->
+
+<!-- #disease_groups = c("DLB", "PD", "PDD") -->
+
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- sample_counts <- sample_info %>%  -->
+<!--   count(Disease_Group = Group) %>%  -->
+<!--   dplyr::filter(Disease_Group %in% unlist(factor_list)) -->
+
+<!-- ``` -->
+
+
+
+
+<!-- ```{r} -->
+<!-- comparison_df <- master_df -->
+
+<!-- # Replace NAs in genic type with intergenic, and create column of collapsed biotypes for plotting -->
+<!-- comparison_df <- comparison_df %>%  -->
+<!--   tidyr::replace_na(list(gene_type = "intergenic")) %>%  -->
+<!--   dplyr::mutate(biotype_plots = gene_biotype) %>%  -->
+<!--   dplyr::filter(Disease_Group %in% factor_levels)  -->
+
+
+<!-- comparison_df$Disease_Group <- factor(comparison_df$Disease_Group) -->
+
+<!-- levels(comparison_df$biotype_plots) <- vep_levels_BIOTYPE -->
+<!-- comparison_df$locus <- factor(comparison_df$locus) -->
+
+<!-- # Check levels in data match levels in factor to be  -->
+<!-- dataframe_levels <- levels(comparison_df$Disease_Group) -->
+<!-- supplied_levels <- unlist(factor_list) -->
+<!-- if (!all(dataframe_levels %in% supplied_levels) && all(supplied_levels %in% dataframe_levels)) { -->
+<!--   errorCondition("Supplied sorting factor does not match levels in data") -->
+<!-- } -->
+<!-- levels(comparison_df$Disease_Group) <- factor_list -->
+
+<!-- loci_consequences <- comparison_df %>%  -->
+<!--   dplyr::select(locus, gene_name, biotype_plots, gene_type) %>%  -->
+<!--   dplyr::distinct(locus, .keep_all = T) -->
+
+<!-- comparison_df %>% arrange(locus) -->
+
+<!-- ``` -->
+
+
+
+
+<!-- ### Sites common to 2 samples per group -->
+
+<!-- ```{r, units = cm, fig.width = 20, fig.height = 12} -->
+<!-- sites_to_explore <- copy(comparison_df) -->
+<!-- number_common_samples_per_group = 2 -->
+<!-- site_label <- "common_2_sample" -->
+<!-- site_annotation <- "Sites common to 2 samples per group: " -->
+
+<!-- common_loci <- find_sites_loci_common_to_x_samples(sites_df = sites_to_explore, -->
+<!--                                     sample_counts_df = sample_counts, -->
+<!--                                     no_common_samples_per_site = number_common_samples_per_group ) -->
+<!-- sites_subset <- filter_sites_by_locus_vector(sites_df = sites_to_explore, -->
+<!--                                              vector_of_loci = common_loci, -->
+<!--                                              factors_between_groups = factor_list) -->
+
+<!-- # Baseline plots: rate and site number -->
+<!-- edit_mean_rate_box <- create_box_plot_editing_metric_per_disease_group(edit_summary_df = sites_subset, -->
+<!--                                                  plotting_variable = "Edits") + -->
+<!--   labs(subtitle = "Editing rate per sample") -->
+
+<!-- total_sites <- plot_site_number_boxplot(sites_subset) -->
+
+
+<!-- # Locus site regression -->
+<!-- lm_results_sites <- regress_editing(sites_df = sites_subset, -->
+<!--                               editing_metric = "Edits", -->
+<!--                               covariates = covariate_list, -->
+<!--                               factor_list = factor_list, -->
+<!--                               outcome_measure = outcome_to_explore, -->
+<!--                               disease = disease) -->
+
+
+
+
+
+<!-- forest_plot_sites <- create_forest_plot_from_lm(linear_model = lm_results_sites$lm_results_with_outcome, -->
+<!--                                           disease = disease) + -->
+<!--   labs(title = "Regression of sites") -->
+
+
+<!-- forest_plot_sites <- create_forest_plot_from_lm(linear_model = lm_results_sites$lm_results_with_outcome, -->
+<!--                                           disease = disease) + -->
+<!--   labs(title = "Regression of sites") -->
+
+<!-- ## Compare baseline to change function -->
+<!-- compare_baseline_df <- compare_proportions_baseline_altered(lm_results_list = lm_results_sites, -->
+<!--                                      loci_consequences = loci_consequences, -->
+<!--                                      factor_list = factor_list) -->
+
+
+<!-- genic_dif_plot <- plot_compare_proportions_baseline(compare_proportions_df = compare_baseline_df, -->
+<!--                                   metric_to_plot = "gene_type", -->
+<!--                                   fill_label = "Genic Location") -->
+<!-- biotype_dif_plot <- plot_compare_proportions_baseline(compare_proportions_df = compare_baseline_df, -->
+<!--                                   metric_to_plot = "biotype_plots", -->
+<!--                                   fill_label = "Biotype") -->
+
+<!-- # Summary metric -->
+<!-- gene_metric_df <- sites_subset %>%  -->
+<!--    get_editing_summary_metric(summary_df = ., -->
+<!--                                  gene_lengths_df = gene_lengths, -->
+<!--                               outcome_measure = outcome_to_explore, -->
+<!--                               covariates = covariate_list)  -->
+
+
+<!-- # Plot number of sites per gene -->
+<!-- no_sites_boxplot <- create_box_plot_editing_metric_per_disease_group(edit_summary_df = gene_metric_df, -->
+<!--                                                  plotting_variable = "no_sites") + -->
+<!--   labs(subtitle = "No sites per gene", x = NULL) -->
+
+<!-- # Define metrics and labels in a named list -->
+<!-- editing_metrics <- list( -->
+<!--   mean_adjusted = "Mean edits per gene", -->
+<!--   no_sites_adjusted = "No. of sites per gene", -->
+<!--   mean_over_exon_length_adjusted = "Mean over exon length", -->
+<!--   mean_x_no_sites_adjusted = "Mean * No. of sites", -->
+<!--   complete_mean_adjusted = "Complete editing metric" -->
+<!-- ) -->
+
+<!-- # Use lapply to iterate and return a list of plots -->
+<!-- forest_plots <- lapply(names(editing_metrics), function(edit_variable_to_plot) { -->
+
+<!--   edit_variable_label <- editing_metrics[[edit_variable_to_plot]] -->
+
+<!--   lm_results <- regress_editing( -->
+<!--     sites_df = gene_metric_df, -->
+<!--     editing_metric = edit_variable_to_plot, -->
+<!--     covariates = covariate_list, -->
+<!--     factor_list = factor_list, -->
+<!--     outcome_measure = outcome_to_explore, -->
+<!--     disease = disease -->
+<!--   ) -->
+
+<!--   forest_plot <- create_forest_plot_from_lm(linear_model = lm_results$lm_results_with_outcome, -->
+<!--                                             disease = disease) + -->
+<!--     labs(title = edit_variable_label) -->
+
+<!--   return(forest_plot) -->
+<!-- }) -->
+
+<!-- # Name the list elements according to the editing metric names -->
+<!-- names(forest_plots) <- names(editing_metrics) -->
+
+<!-- all_forest_plots <- c(list(forest_plot_sites = forest_plot_sites), forest_plots[names(editing_metrics)])  -->
+
+<!-- summary_plot <- (edit_mean_rate_box | total_sites | no_sites_boxplot | genic_dif_plot | biotype_dif_plot ) / -->
+<!--   (Reduce(`|`, all_forest_plots)) + -->
+<!--     plot_layout(guides = "collect") + -->
+<!--      plot_annotation(title = paste0(disease, " verse control")) -->
+
+<!-- summary_plot -->
+
+
+<!-- ``` -->
+
+<!-- ## Explore the top edited genes -->
+
+<!-- There are 12,009 genes in the overall dataset -->
+
+<!-- ```{r} -->
+<!-- dif_edits <- lm_results_sites$mean_residuals_df %>%  -->
+<!--   left_join(loci_consequences, -->
+<!--             by = "locus") %>%  -->
+<!--   arrange(desc(edit_difference_per_feature)) -->
+
+<!-- top_edits_sites_list <- dif_edits %>%  -->
+<!--   distinct(gene_name) %>%  -->
+<!--   unlist() -->
+
+<!-- write.csv(top_edits_sites_list, file = str_c(args$output_folder, -->
+<!--                                              "/top_genes_list/", -->
+<!--                                              disease, -->
+<!--                                              "_top_edit_sites_list.csv")) -->
+
+
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- dif_edits_genes <- dif_edits %>%  -->
+<!--   group_by(gene_name, biotype_plots) %>%  -->
+<!--   summarise(mean_dif_edits_per_gene = mean(edit_difference_per_feature)) %>%  -->
+<!--   arrange(desc(mean_dif_edits_per_gene)) -->
+
+<!-- top_edits_genes_list <- dif_edits_genes %>%  -->
+<!--   ungroup() %>%  -->
+<!--   dplyr::select(gene_name) %>%  -->
+<!--   unlist() -->
+
+<!-- write.csv(top_edits_genes_list, file = str_c(args$output_folder, -->
+<!--                                             "/top_genes_list/", -->
+<!--                                              disease, -->
+<!--                                              "_top_edit_genes_list.csv")) -->
+
+<!-- ``` -->
+
+<!-- ### EWCE analysis -->
+
+<!-- ```{r} -->
+<!-- # Load internal specificity matrices -->
+<!-- library(EWCE) -->
+
+<!-- ctd_files <-  -->
+<!--   list.files( -->
+<!--     file.path( -->
+<!--       args$output_folder, -->
+<!--       "acta_snRNA_specificity_matrix_march2020" -->
+<!--     ),  -->
+<!--     pattern = "ctd",  -->
+<!--     full.names = T) -->
+
+
+<!-- ctd_list <- vector(mode = "list", length = length(ctd_files)) -->
+
+<!-- for(i in 1:length(ctd_files)){ -->
+
+<!--   # Load ctd -->
+<!--   ctd_list[[i]] <- readRDS(ctd_files[i]) -->
+
+<!--   # Extract file name -->
+<!--   title <-  -->
+<!--     ctd_files[i] %>%  -->
+<!--     str_replace(".*/", "") %>%  -->
+<!--     str_replace("\\..*", "") %>%  -->
+<!--     str_replace(".*_", "") -->
+
+<!--   # Name list -->
+<!--   names(ctd_list)[i] <- title -->
+
+<!-- } -->
+
+<!-- reps = 100 -->
+<!-- annot_level = 1 -->
+
+<!-- ``` -->
+
+<!-- #### 100 reps, Top 10% genes, relative to PD Brain -->
+<!-- ```{r} -->
+<!-- top_gene_n = length(top_edits_sites_list)/10 -->
+<!-- ctd_dataset = ctd_list[[disease]] -->
+<!-- ``` -->
+
+
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+
+
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                  sctSpecies = "human", -->
+<!--                                                  genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 1000, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+
+<!-- ``` -->
+
+<!-- #### 100 reps, Top 10% genes, relative to control brain -->
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+
+<!-- ctd_dataset = ctd_list$Control -->
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_list$Control, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                   hits = top_edits_genes_list[1:top_gene_n],, -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+<!-- ``` -->
+
+
+<!-- #### 100 reps, Top 2000 genes, relative to PD Brain -->
+
+<!-- ```{r} -->
+<!-- top_gene_n  = 2000 -->
+<!-- ctd_dataset = ctd_list[[disease]] -->
+
+<!-- ``` -->
+
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+
+
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+
+<!-- ``` -->
+
+<!-- #### 100 reps, Top 2000 genes, relative to Control Brain -->
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+
+<!-- ctd_dataset = ctd_list$Control -->
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_list$Control, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BY", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                   hits = top_edits_genes_list[1:top_gene_n],, -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+<!-- ``` -->
+
+
+
+
+
+<!-- #### 100 reps, Top 1000 genes, relative to PD Brain -->
+
+<!-- ```{r} -->
+<!-- top_gene_n  = 1000 -->
+<!-- ctd_dataset = ctd_list[[disease]] -->
+<!-- ``` -->
+
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+
+
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                   hits = top_edits_genes_list[1:top_gene_n],, -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+
+<!-- ``` -->
+
+<!-- #### 100 reps, Top 1000 genes, relative to Control Brain -->
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+<!-- ctd_dataset = ctd_list$Control -->
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_list$Control, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_genes_list[1:top_gene_n],, -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+<!-- ``` -->
+
+
+
+<!-- #### 100 reps, Top 500 genes, relative to PD  -->
+
+<!-- ```{r} -->
+<!-- top_gene_n = 500 -->
+<!-- ctd_dataset = ctd_list[[disease]] -->
+<!-- ``` -->
+
+
+<!-- 1000 genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+
+<!-- ``` -->
+
+<!-- #### 100 reps, Top 500 genes, relative to Control Brain -->
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+<!-- ctd_dataset = ctd_list$Control -->
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_list$Control, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                   hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+<!-- ``` -->
+
+
+
+<!-- #### 100 reps, Top 100 genes, relative to PD  -->
+
+<!-- ```{r} -->
+<!-- top_gene_n = 100 -->
+<!-- ctd_dataset = ctd_list[[disease]] -->
+<!-- ``` -->
+
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                   hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+
+<!-- ``` -->
+
+<!-- #### 100 reps, Top 100 genes, relative to Control Brain -->
+
+<!-- 100 genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+<!-- ctd_dataset = ctd_list$Control -->
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_list$Control, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+
+<!-- 500 genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                   hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+<!-- ``` -->
+
+
+
+
+<!-- # DLB -->
+<!-- ```{r} -->
+
+<!-- disease = "DLB" -->
+
+<!-- disease_groups = disease -->
+<!-- factor_levels = c("Control", disease) # Always list factor levels with control/untreated first. -->
+<!-- covariate_list = c("RIN", "Sex") -->
+<!-- outcome_to_explore = "Disease_Group" -->
+<!-- factor_list <- c(Control = "Control",  -->
+<!--                  setNames(list(disease), disease)) -->
+
+<!-- #disease_groups = c("DLB", "PD", "PDD") -->
+
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- sample_counts <- sample_info %>%  -->
+<!--   count(Disease_Group = Group) %>%  -->
+<!--   dplyr::filter(Disease_Group %in% unlist(factor_list)) -->
+<!-- sample_counts -->
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- # Load file of significant results -->
+<!-- comparison_df <- master_df -->
+
+<!-- # Replace NAs in genic type with intergenic, and create column of collapsed biotypes for plotting -->
+<!-- comparison_df <- comparison_df %>%  -->
+<!--   tidyr::replace_na(list(gene_type = "intergenic")) %>%  -->
+<!--   dplyr::mutate(biotype_plots = gene_biotype) %>%  -->
+<!--   dplyr::filter(Disease_Group %in% factor_levels)  -->
+
+
+<!-- comparison_df$Disease_Group <- factor(comparison_df$Disease_Group) -->
+
+<!-- levels(comparison_df$biotype_plots) <- vep_levels_BIOTYPE -->
+<!-- comparison_df$locus <- factor(comparison_df$locus) -->
+
+<!-- # Check levels in data match levels in factor to be  -->
+<!-- dataframe_levels <- levels(comparison_df$Disease_Group) -->
+<!-- supplied_levels <- unlist(factor_list) -->
+<!-- if (!all(dataframe_levels %in% supplied_levels) && all(supplied_levels %in% dataframe_levels)) { -->
+<!--   errorCondition("Supplied sorting factor does not match levels in data") -->
+<!-- } -->
+<!-- levels(comparison_df$Disease_Group) <- factor_list -->
+
+<!-- loci_consequences <- comparison_df %>%  -->
+<!--   dplyr::select(locus, gene_name, biotype_plots, gene_type) %>%  -->
+<!--   dplyr::distinct(locus, .keep_all = T) -->
+
+<!-- comparison_df %>% arrange(locus) -->
+
+<!-- ``` -->
+
+
+
+<!-- ### Sites common to 2 samples per group -->
+
+<!-- ```{r, units = cm, fig.width = 20, fig.height = 12} -->
+<!-- sites_to_explore <- copy(comparison_df) -->
+<!-- number_common_samples_per_group = 2 -->
+<!-- site_label <- "common_2_sample" -->
+<!-- site_annotation <- "Sites common to 2 samples per group: " -->
+
+<!-- common_loci <- find_sites_loci_common_to_x_samples(sites_df = sites_to_explore, -->
+<!--                                     sample_counts_df = sample_counts, -->
+<!--                                     no_common_samples_per_site = number_common_samples_per_group ) -->
+<!-- sites_subset <- filter_sites_by_locus_vector(sites_df = sites_to_explore, -->
+<!--                                              vector_of_loci = common_loci, -->
+<!--                                              factors_between_groups = factor_list) -->
+
+<!-- # Baseline plots: rate and site number -->
+<!-- edit_mean_rate_box <- create_box_plot_editing_metric_per_disease_group(edit_summary_df = sites_subset, -->
+<!--                                                  plotting_variable = "Edits") + -->
+<!--   labs(subtitle = "Editing rate per sample") -->
+
+<!-- total_sites <- plot_site_number_boxplot(sites_subset) -->
+
+
+<!-- # Locus site regression -->
+<!-- lm_results_sites <- regress_editing(sites_df = sites_subset, -->
+<!--                               editing_metric = "Edits", -->
+<!--                               covariates = covariate_list, -->
+<!--                               factor_list = factor_list, -->
+<!--                               outcome_measure = outcome_to_explore, -->
+<!--                               disease = disease) -->
+
+
+<!-- forest_plot_sites <- create_forest_plot_from_lm(linear_model = lm_results_sites$lm_results_with_outcome, -->
+<!--                                           disease = disease) + -->
+<!--   labs(title = "Regression of sites") -->
+
+<!-- ## Compare baseline to change function -->
+<!-- compare_baseline_df <- compare_proportions_baseline_altered(lm_results_list = lm_results_sites, -->
+<!--                                      loci_consequences = loci_consequences, -->
+<!--                                      factor_list = factor_list) -->
+<!-- genic_dif_plot <- plot_compare_proportions_baseline(compare_proportions_df = compare_baseline_df, -->
+<!--                                   metric_to_plot = "gene_type", -->
+<!--                                   fill_label = "Genic Location") -->
+<!-- biotype_dif_plot <- plot_compare_proportions_baseline(compare_proportions_df = compare_baseline_df, -->
+<!--                                   metric_to_plot = "biotype_plots", -->
+<!--                                   fill_label = "Biotype") -->
+
+<!-- # Summary metric -->
+<!-- gene_metric_df <- sites_subset %>%  -->
+<!--    get_editing_summary_metric(summary_df = ., -->
+<!--                                  gene_lengths_df = gene_lengths, -->
+<!--                               outcome_measure = outcome_to_explore, -->
+<!--                               covariates = covariate_list)  -->
+
+<!-- # Plot number of sites per gene -->
+<!-- no_sites_boxplot <- create_box_plot_editing_metric_per_disease_group(edit_summary_df = gene_metric_df, -->
+<!--                                                  plotting_variable = "no_sites") + -->
+<!--   labs(subtitle = "No sites per gene", x = NULL) -->
+
+<!-- # Define metrics and labels in a named list -->
+<!-- editing_metrics <- list( -->
+<!--   mean_adjusted = "Mean edits per gene", -->
+<!--   no_sites_adjusted = "No. of sites per gene", -->
+<!--   mean_over_exon_length_adjusted = "Mean over exon length", -->
+<!--   mean_x_no_sites_adjusted = "Mean * No. of sites", -->
+<!--   complete_mean_adjusted = "Complete editing metric" -->
+<!-- ) -->
+
+<!-- # Use lapply to iterate and return a list of plots -->
+<!-- forest_plots <- lapply(names(editing_metrics), function(edit_variable_to_plot) { -->
+
+<!--   edit_variable_label <- editing_metrics[[edit_variable_to_plot]] -->
+
+<!--   lm_results <- regress_editing( -->
+<!--     sites_df = gene_metric_df, -->
+<!--     editing_metric = edit_variable_to_plot, -->
+<!--     covariates = covariate_list, -->
+<!--     factor_list = factor_list, -->
+<!--     outcome_measure = outcome_to_explore, -->
+<!--     disease = disease -->
+<!--   ) -->
+
+<!--   forest_plot <- create_forest_plot_from_lm(linear_model = lm_results$lm_results_with_outcome, -->
+<!--                                             disease = disease) + -->
+<!--     labs(title = edit_variable_label) -->
+
+<!--   return(forest_plot) -->
+<!-- }) -->
+
+<!-- # Name the list elements according to the editing metric names -->
+<!-- names(forest_plots) <- names(editing_metrics) -->
+
+<!-- all_forest_plots <- c(list(forest_plot_sites = forest_plot_sites), forest_plots[names(editing_metrics)])  -->
+
+<!-- summary_plot <- (edit_mean_rate_box | total_sites | no_sites_boxplot | genic_dif_plot | biotype_dif_plot ) / -->
+<!--   (Reduce(`|`, all_forest_plots)) + -->
+<!--     plot_layout(guides = "collect") + -->
+<!--      plot_annotation(title = paste0(disease, " verse control")) -->
+
+<!-- summary_plot -->
+
+
+<!-- ``` -->
+
+
+
+<!-- ## Explore the top edited genes -->
+
+
+
+<!-- ```{r} -->
+<!-- dif_edits <- lm_results_sites$mean_residuals_df %>%  -->
+<!--   left_join(loci_consequences, -->
+<!--             by = "locus") %>%  -->
+<!--   arrange(desc(edit_difference_per_feature)) -->
+
+<!-- top_edits_sites_list <- dif_edits %>%  -->
+<!--   distinct(gene_name) %>%  -->
+<!--   unlist() -->
+
+<!-- write.csv(top_edits_sites_list, file = str_c(args$output_folder, -->
+<!--                                              "/top_genes_list/", -->
+<!--                                              disease, -->
+<!--                                              "_top_edit_sites_list.csv"), -->
+<!--                                             row.names = F) -->
+
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- dif_edits_genes <- dif_edits %>%  -->
+<!--   group_by(gene_name, biotype_plots) %>%  -->
+<!--   summarise(mean_dif_edits_per_gene = mean(edit_difference_per_feature)) %>%  -->
+<!--   arrange(desc(mean_dif_edits_per_gene)) -->
+
+<!-- top_edits_genes_list <- dif_edits_genes %>%  -->
+<!--   ungroup() %>%  -->
+<!--   dplyr::select(gene_name) %>%  -->
+<!--   unlist() -->
+
+<!-- write.csv(top_edits_genes_list, file = str_c(args$output_folder, -->
+<!--                                             "/top_genes_list/", -->
+<!--                                              disease, -->
+<!--                                              "_top_edit_genes_list.csv"), -->
+<!--                                             row.names = F) -->
+
+<!-- ``` -->
+
+<!-- ### EWCE analysis -->
+
+<!-- ```{r} -->
+<!-- # Load internal specificity matrices -->
+<!-- library(EWCE) -->
+
+<!-- ctd_files <-  -->
+<!--   list.files( -->
+<!--     file.path( -->
+<!--       args$output_folder, -->
+<!--       "acta_snRNA_specificity_matrix_march2020" -->
+<!--     ),  -->
+<!--     pattern = "ctd",  -->
+<!--     full.names = T) -->
+
+
+<!-- ctd_list <- vector(mode = "list", length = length(ctd_files)) -->
+
+<!-- for(i in 1:length(ctd_files)){ -->
+
+<!--   # Load ctd -->
+<!--   ctd_list[[i]] <- readRDS(ctd_files[i]) -->
+
+<!--   # Extract file name -->
+<!--   title <-  -->
+<!--     ctd_files[i] %>%  -->
+<!--     str_replace(".*/", "") %>%  -->
+<!--     str_replace("\\..*", "") %>%  -->
+<!--     str_replace(".*_", "") -->
+
+<!--   # Name list -->
+<!--   names(ctd_list)[i] <- title -->
+
+<!-- } -->
+
+<!-- reps = 100 -->
+<!-- annot_level = 1 -->
+
+<!-- ``` -->
+
+
+
+
+<!-- #### 100 reps, Top 1000 genes, relative to DLB Brain -->
+
+<!-- ```{r} -->
+<!-- top_gene_n  = 1000 -->
+<!-- ctd_dataset = ctd_list[[disease]] -->
+<!-- ``` -->
+
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and DLB -->
+<!-- ```{r} -->
+
+
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+
+<!-- ``` -->
+
+<!-- #### 100 reps, Top 1000 genes, relative to Control Brain -->
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and DLB -->
+<!-- ```{r} -->
+<!-- ctd_dataset = ctd_list$Control -->
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_list$Control, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+<!-- ``` -->
+
+
+
+<!-- # PDD -->
+
+<!-- ```{r} -->
+
+<!-- disease = "PDD" -->
+
+<!-- disease_groups = disease -->
+<!-- factor_levels = c("Control", disease) # Always list factor levels with control/untreated first. -->
+<!-- covariate_list = c("RIN", "Sex") -->
+<!-- outcome_to_explore = "Disease_Group" -->
+<!-- factor_list <- c(Control = "Control",  -->
+<!--                  setNames(list(disease), disease)) -->
+
+<!-- #disease_groups = c("DLB", "PD", "PDD") -->
+
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- sample_counts <- sample_info %>%  -->
+<!--   count(Disease_Group = Group) %>%  -->
+<!--   dplyr::filter(Disease_Group %in% unlist(factor_list)) -->
+<!-- sample_counts -->
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- # Load file of significant results -->
+<!-- comparison_df <- master_df -->
+
+<!-- # Replace NAs in genic type with intergenic, and create column of collapsed biotypes for plotting -->
+<!-- comparison_df <- comparison_df %>%  -->
+<!--   tidyr::replace_na(list(gene_type = "intergenic")) %>%  -->
+<!--   dplyr::mutate(biotype_plots = gene_biotype) %>%  -->
+<!--   dplyr::filter(Disease_Group %in% factor_levels)  -->
+
+
+<!-- comparison_df$Disease_Group <- factor(comparison_df$Disease_Group) -->
+
+<!-- levels(comparison_df$biotype_plots) <- vep_levels_BIOTYPE -->
+<!-- comparison_df$locus <- factor(comparison_df$locus) -->
+
+<!-- # Check levels in data match levels in factor to be  -->
+<!-- dataframe_levels <- levels(comparison_df$Disease_Group) -->
+<!-- supplied_levels <- unlist(factor_list) -->
+<!-- if (!all(dataframe_levels %in% supplied_levels) && all(supplied_levels %in% dataframe_levels)) { -->
+<!--   errorCondition("Supplied sorting factor does not match levels in data") -->
+<!-- } -->
+<!-- levels(comparison_df$Disease_Group) <- factor_list -->
+
+
+<!-- loci_consequences <- comparison_df %>%  -->
+<!--   dplyr::select(locus, gene_name, biotype_plots, gene_type) %>%  -->
+<!--   dplyr::distinct(locus, .keep_all = T) -->
+
+<!-- comparison_df %>% arrange(locus) -->
+
+<!-- ``` -->
+
+
+
+
+<!-- ### Sites common to 2 samples per group -->
+
+<!-- ```{r, units = cm, fig.width = 20, fig.height = 12} -->
+<!-- sites_to_explore <- copy(comparison_df) -->
+<!-- number_common_samples_per_group = 2 -->
+<!-- site_label <- "common_2_sample" -->
+<!-- site_annotation <- "Sites common to 2 samples per group: " -->
+
+<!-- common_loci <- find_sites_loci_common_to_x_samples(sites_df = sites_to_explore, -->
+<!--                                     sample_counts_df = sample_counts, -->
+<!--                                     no_common_samples_per_site = number_common_samples_per_group ) -->
+<!-- sites_subset <- filter_sites_by_locus_vector(sites_df = sites_to_explore, -->
+<!--                                              vector_of_loci = common_loci, -->
+<!--                                              factors_between_groups = factor_list) -->
+
+<!-- # Baseline plots: rate and site number -->
+<!-- edit_mean_rate_box <- create_box_plot_editing_metric_per_disease_group(edit_summary_df = sites_subset, -->
+<!--                                                  plotting_variable = "Edits") + -->
+<!--   labs(subtitle = "Editing rate per sample") -->
+
+<!-- total_sites <- plot_site_number_boxplot(sites_subset) -->
+
+
+<!-- # Locus site regression -->
+<!-- lm_results_sites <- regress_editing(sites_df = sites_subset, -->
+<!--                               editing_metric = "Edits", -->
+<!--                               covariates = covariate_list, -->
+<!--                               factor_list = factor_list, -->
+<!--                               outcome_measure = outcome_to_explore, -->
+<!--                               disease = disease) -->
+<!-- forest_plot_sites <- create_forest_plot_from_lm(linear_model = lm_results_sites$lm_results_with_outcome, -->
+<!--                                           disease = disease) + -->
+<!--   labs(title = "Regression of sites") -->
+
+
+
+<!-- ## Compare baseline to change function -->
+<!-- compare_baseline_df <- compare_proportions_baseline_altered(lm_results_list = lm_results_sites, -->
+<!--                                      loci_consequences = loci_consequences, -->
+<!--                                      factor_list = factor_list) -->
+<!-- genic_dif_plot <- plot_compare_proportions_baseline(compare_proportions_df = compare_baseline_df, -->
+<!--                                   metric_to_plot = "gene_type", -->
+<!--                                   fill_label = "Genic Location") -->
+<!-- biotype_dif_plot <- plot_compare_proportions_baseline(compare_proportions_df = compare_baseline_df, -->
+<!--                                   metric_to_plot = "biotype_plots", -->
+<!--                                   fill_label = "Biotype") -->
+
+<!-- # Summary metric -->
+<!-- gene_metric_df <- sites_subset %>%  -->
+<!--    get_editing_summary_metric(summary_df = ., -->
+<!--                                  gene_lengths_df = gene_lengths, -->
+<!--                               outcome_measure = outcome_to_explore, -->
+<!--                               covariates = covariate_list)  -->
+
+<!-- # Plot number of sites per gene -->
+<!-- no_sites_boxplot <- create_box_plot_editing_metric_per_disease_group(edit_summary_df = gene_metric_df, -->
+<!--                                                  plotting_variable = "no_sites") + -->
+<!--   labs(subtitle = "No sites per gene", x = NULL) -->
+
+<!-- # Define metrics and labels in a named list -->
+<!-- editing_metrics <- list( -->
+<!--   mean_adjusted = "Mean edits per gene", -->
+<!--   no_sites_adjusted = "No. of sites per gene", -->
+<!--   mean_over_exon_length_adjusted = "Mean over exon length", -->
+<!--   mean_x_no_sites_adjusted = "Mean * No. of sites", -->
+<!--   complete_mean_adjusted = "Complete editing metric" -->
+<!-- ) -->
+
+<!-- # Use lapply to iterate and return a list of plots -->
+<!-- forest_plots <- lapply(names(editing_metrics), function(edit_variable_to_plot) { -->
+
+<!--   edit_variable_label <- editing_metrics[[edit_variable_to_plot]] -->
+
+<!--   lm_results <- regress_editing( -->
+<!--     sites_df = gene_metric_df, -->
+<!--     editing_metric = edit_variable_to_plot, -->
+<!--     covariates = covariate_list, -->
+<!--     factor_list = factor_list, -->
+<!--     outcome_measure = outcome_to_explore, -->
+<!--     disease = disease -->
+<!--   ) -->
+
+<!--   forest_plot <- create_forest_plot_from_lm(linear_model = lm_results$lm_results_with_outcome, -->
+<!--                                             disease = disease) + -->
+<!--     labs(title = edit_variable_label) -->
+
+<!--   return(forest_plot) -->
+<!-- }) -->
+
+<!-- # Name the list elements according to the editing metric names -->
+<!-- names(forest_plots) <- names(editing_metrics) -->
+
+<!-- all_forest_plots <- c(list(forest_plot_sites = forest_plot_sites), forest_plots[names(editing_metrics)])  -->
+
+<!-- summary_plot <- (edit_mean_rate_box | total_sites | no_sites_boxplot | genic_dif_plot | biotype_dif_plot ) / -->
+<!--   (Reduce(`|`, all_forest_plots)) + -->
+<!--     plot_layout(guides = "collect") + -->
+<!--      plot_annotation(title = paste0(disease, " verse control")) -->
+
+<!-- summary_plot -->
+
+
+<!-- ``` -->
+
+
+<!-- ## Explore the top edited genes -->
+
+
+
+<!-- ```{r} -->
+<!-- dif_edits <- lm_results_sites$mean_residuals_df %>%  -->
+<!--   left_join(loci_consequences, -->
+<!--             by = "locus") %>%  -->
+<!--   arrange(desc(edit_difference_per_feature)) -->
+
+<!-- top_edits_sites_list <- dif_edits %>%  -->
+<!--   distinct(gene_name) %>%  -->
+<!--   unlist() -->
+
+<!-- write.csv(top_edits_sites_list, file = str_c(args$output_folder, -->
+<!--                                              "/top_genes_list/", -->
+<!--                                              disease, -->
+<!--                                              "_top_edit_sites_list.csv"), -->
+<!--                                             row.names = F) -->
+
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- dif_edits_genes <- dif_edits %>%  -->
+<!--   group_by(gene_name, biotype_plots) %>%  -->
+<!--   summarise(mean_dif_edits_per_gene = mean(edit_difference_per_feature)) %>%  -->
+<!--   arrange(desc(mean_dif_edits_per_gene)) -->
+
+<!-- top_edits_genes_list <- dif_edits_genes %>%  -->
+<!--   ungroup() %>%  -->
+<!--   dplyr::select(gene_name) %>%  -->
+<!--   unlist() -->
+
+<!-- write.csv(top_edits_genes_list, file = str_c(args$output_folder, -->
+<!--                                             "/top_genes_list/", -->
+<!--                                              disease, -->
+<!--                                              "_top_edit_genes_list.csv"), -->
+<!--                                             row.names = F) -->
+
+<!-- ``` -->
+
+<!-- ### EWCE analysis -->
+
+<!-- ```{r} -->
+<!-- # Load internal specificity matrices -->
+<!-- library(EWCE) -->
+
+<!-- ctd_files <-  -->
+<!--   list.files( -->
+<!--     file.path( -->
+<!--       args$output_folder, -->
+<!--       "acta_snRNA_specificity_matrix_march2020" -->
+<!--     ),  -->
+<!--     pattern = "ctd",  -->
+<!--     full.names = T) -->
+
+
+<!-- ctd_list <- vector(mode = "list", length = length(ctd_files)) -->
+
+<!-- for(i in 1:length(ctd_files)){ -->
+
+<!--   # Load ctd -->
+<!--   ctd_list[[i]] <- readRDS(ctd_files[i]) -->
+
+<!--   # Extract file name -->
+<!--   title <-  -->
+<!--     ctd_files[i] %>%  -->
+<!--     str_replace(".*/", "") %>%  -->
+<!--     str_replace("\\..*", "") %>%  -->
+<!--     str_replace(".*_", "") -->
+
+<!--   # Name list -->
+<!--   names(ctd_list)[i] <- title -->
+
+<!-- } -->
+
+<!-- reps = 100 -->
+<!-- annot_level = 1 -->
+
+<!-- ``` -->
+
+
+
+
+
+
+<!-- #### 100 reps, Top 1000 genes, relative to PDD Brain -->
+
+<!-- ```{r} -->
+<!-- top_gene_n  = 1000 -->
+<!-- ctd_dataset = ctd_list[[disease]] -->
+
+
+<!-- ``` -->
+
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PD -->
+<!-- ```{r} -->
+
+
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PD -->
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+
+<!-- ``` -->
+
+<!-- #### 100 reps, Top 1000 genes, relative to Control Brain -->
+
+<!-- Genes that contain the sites with greatest difference in editing rate between control and PDD -->
+<!-- ```{r} -->
+<!-- ctd_dataset = ctd_list$Control -->
+<!-- ewce_sites <- EWCE::bootstrap_enrichment_test(sct_data = ctd_list$Control, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                 hits = top_edits_sites_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_sites$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+<!-- ``` -->
+
+
+<!-- Genes that contain the greatest difference in mean editing rate per gene between control and PDD -->
+
+<!-- ```{r} -->
+<!-- ewce_genes <- EWCE::bootstrap_enrichment_test(sct_data = ctd_dataset, -->
+<!--                                                 sctSpecies = "human", -->
+<!--                                                 genelistSpecies = "human", -->
+<!--                                                  hits = top_edits_genes_list[1:top_gene_n], -->
+<!--                                                 reps = 100, -->
+<!--                                                 annotLevel = annot_level) -->
+<!-- plot_list <- EWCE::ewce_plot(total_res = ewce_genes$results, -->
+<!--                            mtc_method = "BH", -->
+<!--                            ctd = ctd_dataset) -->
+<!-- plot_list[[1]] -->
+
+
+<!-- ``` -->
+
+
+
+
+)

@@ -36,8 +36,12 @@ Within this repository you will find:
 | [rscripts](rscripts) | Contains analysis scripts. Each script contains a one-line description and is also referenced in its corresponding `.Rmd`. |
 
 ## Reproducibility
+<!-- Modify selection below depending on how package dependencies have been managed. -->
 
 ### `renv`
+<!-- Consider using renv for reproducibility. Delete this section if you will not be doing this. -->
+
+*TODO: consider setting up `renv`, using the following [guide](https://rstudio.github.io/renv/articles/renv.html. Modify text below as appropriate.* 
 
 This repository uses [`renv`](https://rstudio.github.io/renv/index.html) to create a reproducible environment for this R project. 
 
@@ -45,6 +49,10 @@ This repository uses [`renv`](https://rstudio.github.io/renv/index.html) to crea
 2. After this has completed, you can use `renv::restore()` to restore the project library locally on your machine.
 
 For more information on collaborating with `renv`, please refer to this [link](https://rstudio.github.io/renv/articles/collaborating.html).
+
+### `DESCRIPTION`
+<!-- Consider using renv for reproducibility. Delete this section if you will not be doing this. -->
+
 
 
 ## License
