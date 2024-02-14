@@ -25,14 +25,12 @@ includes work shared between two repositories:
 
 Within this repository you will find:
 
-| Directory            | Description                                                                                                                                             |
-|----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [docs](docs)         | Contains all `.Rmd`s and their corresponding `.html`s describing analyses performed for this project. These can be view interactively at: [link](#TODO) |
-| [scripts](scripts)   | Contains all non R and R related scripts.                                                                                                               |
-| [raw_data](raw_data) | External tables used in analyses.                                                                                                                       |
-| [renv](renv)         | `renv`-related scripts                                                                                                                                  |
-| [results](results)   | Results from all analyses.                                                                                                                              |
-| [rscripts](rscripts) | Contains analysis scripts. Each script contains a one-line description and is also referenced in its corresponding `.Rmd`.                              |
+| Directory                   | Description                                                                                                                                                                                  |
+|-----------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [docs](docs)                | Contains all `.Rmd`s and their corresponding `.html`s describing analyses performed for this project. These can be view interactively at: <https://aaronwagen.github.io/Astrocytes_editing/> |
+| [scripts](scripts)          | Contains all non R and R related scripts.                                                                                                                                                    |
+| [renv](renv)                | `renv`-related scripts                                                                                                                                                                       |
+| [functions](functions_args) | Contains r functions used throughout the analysis, and common arguments and filters `.Rmd`.                                                                                                  |
 
 ## Reproducibility
 
