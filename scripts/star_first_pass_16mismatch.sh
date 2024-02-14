@@ -17,7 +17,7 @@
 # Aaron Wagen, adapted from George Young
 # Sept 2022
 
-# This script runs the first pass of star alignment on a list of samples outlined in SampleAnnot. 
+# This script runs the first pass of star alignment on a list of samples outlined in SampleAnnot.
 # In the first pass it will save only the split junction .tab files, to collapse and filter into a combined SJ.filtered.tab file for second pass filtering.
 
 # Example command to run on slurm:

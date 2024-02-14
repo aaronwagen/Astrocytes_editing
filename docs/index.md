@@ -5,4 +5,5 @@
 
 | No. | Title | Description |
 | --- | --- | --- | 
-| 01 | [Title of analysis 01](01_analysis.html) | Brief description of analysis 01 |
+| 01 | [Astrocyte Analysis](01_astrocyte_analysis.html) | Editing analysis of astrocyte and astro-neuronal co-cultures |
+| 01 | [Brain Analysis](02_brain_analysis.html) | Editing analysis of post mortem brain samples |
