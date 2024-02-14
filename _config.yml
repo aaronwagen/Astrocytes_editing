@@ -1,0 +1,12 @@
+title: RNA editing in astrocytes
+author: Aaron Wagen
+github_username:  aaronwagen
+
+# Build settings
+theme: minima
+plugins:
+  - jekyll-feed
+
+exclude:
+  - raw_data
+  - refrerences
