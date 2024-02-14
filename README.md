@@ -7,26 +7,40 @@
 
 ## Background
 
-This project explores A-to-I RNA editing in IPSC derived astrocytes, and
-astrocytes co-cultured with neurons.
+This repository contains analysis code for the publication found
+[here](), which explored the response of astrocytes, neurons and
+astro-neuronal co-cultures to alpha-synuclein oligomers. The analysis
+includes work shared between two repositories:
+
+- The repository at <https://github.com/karishdsa/ipscAstrNeurCocul>
+  contains single cell and bulk RNA sequencing analysis of the cell
+  culture models utilised in the study.
+- This current repository contains the analysis of RNA editing in the
+  cell culture models, as well as in a [published
+  dataset](https://link.springer.com/article/10.1007/s00401-021-02343-x)
+  of post-mortem brain samples. The results of this repository can be
+  viewed interactively at
 
 ## Code contents
 
 Within this repository you will find:
 
-| Directory            | Description                                                                                                                                                |
-|----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [docs](docs)         | Contains all `.Rmd`s and their corresponding `.html`s describing analyses performed for this project. These can be view interactively at: [link](#TODO)    |
-| [logs](logs)         | For any scripts that were run outside of an `.Rmd` (e.g. scripts from the [scripts](scripts) directory), a log file was recorded and can be accessed here. |
-| [scripts](scripts)   | Contains non R related scripts.                                                                                                                            |
-| [raw_data](raw_data) | External tables used in analyses.                                                                                                                          |
-| [renv](renv)         | `renv`-related scripts                                                                                                                                     |
-| [results](results)   | Results from all analyses.                                                                                                                                 |
-| [rscripts](rscripts) | Contains analysis scripts. Each script contains a one-line description and is also referenced in its corresponding `.Rmd`.                                 |
+| Directory            | Description                                                                                                                                             |
+|----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [docs](docs)         | Contains all `.Rmd`s and their corresponding `.html`s describing analyses performed for this project. These can be view interactively at: [link](#TODO) |
+| [scripts](scripts)   | Contains all non R and R related scripts.                                                                                                               |
+| [raw_data](raw_data) | External tables used in analyses.                                                                                                                       |
+| [renv](renv)         | `renv`-related scripts                                                                                                                                  |
+| [results](results)   | Results from all analyses.                                                                                                                              |
+| [rscripts](rscripts) | Contains analysis scripts. Each script contains a one-line description and is also referenced in its corresponding `.Rmd`.                              |
 
 ## Reproducibility
 
+<!-- Modify selection below depending on how package dependencies have been managed. -->
+
 ### `renv`
+
+<!-- Consider using renv for reproducibility. Delete this section if you will not be doing this. -->
 
 This repository uses [`renv`](https://rstudio.github.io/renv/index.html)
 to create a reproducible environment for this R project.

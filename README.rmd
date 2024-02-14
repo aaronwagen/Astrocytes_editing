@@ -23,7 +23,7 @@ knitr::opts_chunk$set(
 This repository contains analysis code for the publication found [here](), which explored the response of astrocytes, neurons and astro-neuronal co-cultures to alpha-synuclein oligomers. The analysis includes work shared between two repositories:
 
 - The repository at [https://github.com/karishdsa/ipscAstrNeurCocul](https://github.com/karishdsa/ipscAstrNeurCocul) contains single cell and bulk RNA sequencing analysis of the cell culture models utilised in the study.
-- This current repository contains the analysis of RNA editing in the cell culture models, as well as in a [published dataset](https://link.springer.com/article/10.1007/s00401-021-02343-x) of post-mortem brain samples.
+- This current repository contains the analysis of RNA editing in the cell culture models, as well as in a [published dataset](https://link.springer.com/article/10.1007/s00401-021-02343-x) of post-mortem brain samples. The results of this repository can be viewed interactively at
 
 
 ## Code contents
@@ -33,8 +33,7 @@ Within this repository you will find:
 | Directory | Description |
 | --------- | --------------------------------------------------------------------------- |
 | [docs](docs) | Contains all `.Rmd`s and their corresponding `.html`s describing analyses performed for this project. These can be view interactively at: [link](#TODO)|
-| [logs](logs) | For any scripts that were run outside of an `.Rmd` (e.g. scripts from the [scripts](scripts) directory), a log file was recorded and can be accessed here. |
-| [scripts](scripts)| Contains non R related scripts. |
+| [scripts](scripts)| Contains all non R and R related scripts. |
 | [raw_data](raw_data) | External tables used in analyses. |
 | [renv](renv) | `renv`-related scripts |
 | [results](results) | Results from all analyses. |
@@ -46,18 +45,12 @@ Within this repository you will find:
 ### `renv`
 <!-- Consider using renv for reproducibility. Delete this section if you will not be doing this. -->
 
-*TODO: consider setting up `renv`, using the following [guide](https://rstudio.github.io/renv/articles/renv.html. Modify text below as appropriate.* 
-
 This repository uses [`renv`](https://rstudio.github.io/renv/index.html) to create a reproducible environment for this R project. 
 
 1. When you first launches this project, `renv` should automatically bootstrap itself, thereby downloading and installing the appropriate version of `renv` into the project library. 
 2. After this has completed, you can use `renv::restore()` to restore the project library locally on your machine.
 
 For more information on collaborating with `renv`, please refer to this [link](https://rstudio.github.io/renv/articles/collaborating.html).
-
-### `DESCRIPTION`
-<!-- Consider using renv for reproducibility. Delete this section if you will not be doing this. -->
-
 
 
 ## License
