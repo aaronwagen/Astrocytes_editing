@@ -149,7 +149,7 @@ plot_labels = c("Decreased_editing" = "Decreased editing",
                 "exon" = "Exon",
                 "intron" = "Intron",
                 "intergenic" = "Intergenic",
-                "increased" = "Increased",
+                "increased" = "Increase",
                 "decreased" = "Decreased",
                 "Disease_Group" = "Disease Group",
                 ".resid" = "Corrected residuals"
@@ -191,7 +191,7 @@ named_palette = c(
 
 # Background
 
-Building on the IPSC cell astrocytes and astro-neuronal co-cultures showing increased anti-viral inflammatory markers and RNA editing in response to alpha-synuclein oligomers, we explored whether similar processes were occuring in vivo in PD brains. We used a dataset of post-mortem human brain samples, previously published in [Feleke, Reynolds et al, Cross‐platform transcriptional profiling identifies common and distinct molecular pathologies in Lewy body diseases, Acta Neuropathologica, 2021](https://doi.org/10.1007/s00401-021-02343-x).
+Building on the IPSC cell astrocytes and astro-neuronal co-cultures showing increased anti-viral inflammatory markers and RNA editing in response to alpha-synuclein oligomers, we explored whether similar processes were occuring in vivo in PD brains.
 
 # Methods {.tabset}
 
@@ -548,7 +548,7 @@ compare_baseline_df %>%
 
 # EWCE analysis
 
-We use [expression weighted cell-type enrichment](https://nathanskene.github.io/EWCE/index.html) to explore the genes with the greatest mean change in editing to see whether those genes are enriched in any particular cell types. The specificity matrices utilised were previously derived from the single cell data from the study samples by Regina Reynolds. We explored the top 50 genes relative to the 12,017 total genes in the dataset.
+We use expression weighted cell-type enrichment to explore the genes with the greatest mean change in editing to see whether those genes are enriched in any particular cell types. The specificity matrices utilised were previously derived from the single cell data from the study samples by Regina Reynolds. We explored the top 50 genes relative to the 12,017 total genes in the dataset.
 
 ## Explore the top edited genes
 
@@ -631,13 +631,6 @@ write.csv(top_edits_genes_list, file = str_c(args$output_folder,
 ### EWCE analysis
 
 ```{r}
-top_edits_genes_list <- read.csv(file =  str_c(args$output_folder,
-                                             "/brain/",
-                                             disease,
-                                             "_top_edit_genes_list.csv")) %>% 
-    dplyr::select(x) %>% 
-    unlist()
-
 # Load internal specificity matrices
 ctd_files <- 
   list.files(
@@ -702,9 +695,6 @@ saveRDS(ewce_genes,
 ```
 
 ```{r, fig.width = 5, fig.height=8}
-
-ewce_genes <- readRDS(str_c(args$output_folder, "/brain/EWCE_results_top50_meangene_cf_PD.RDS"))
-
 ewce_figure <- ewce_genes$results %>% 
     dplyr::mutate(sd_from_mean = ifelse(sd_from_mean < 0, NA, sd_from_mean),
                   annotLevel = factor(annotLevel),
@@ -715,78 +705,28 @@ ewce_figure <- ewce_genes$results %>%
   #  scale_colour_continuous(trans = "log10") +
     scale_colour_viridis_c() +
     theme_aw +
-    theme(legend.position = "right") +
     labs(colour = "-log10(p value)", size = "SD from mean", x = NULL)
-
 ewce_figure
-
-ggsave(ewce_figure,
-        file = str_c(args$output_folder, "/brain/brain_ewce_figure_top50_cf_pdbrain_rightlegend.png"),
-        device = "png",
-        dpi = 300,
-        units = "cm",
-        width = 10,
-        height = 12,
-        limitsize = TRUE)
-
-ggsave(ewce_figure,
-        file = str_c(args$output_folder, "/brain/brain_ewce_figure_top50_cf_pdbrain_rightlegend.pdf"),
-        device = "pdf",
-        dpi = 300,
-        units = "cm",
-        width = 10,
-        height = 12,
-        limitsize = TRUE)
-
-
 ```
-
-```{r}
-ewce_figure_bottom <- ewce_figure + theme(legend.position = "bottom")
-ggsave(ewce_figure_bottom,
-        file = str_c(args$output_folder, "/brain/brain_ewce_figure_top50_cf_pdbrain_bottomlegend.png"),
-        device = "png",
-        dpi = 300,
-        units = "cm",
-        width = 18,
-        height = 12,
-        limitsize = TRUE)
-
-ggsave(ewce_figure_bottom,
-        file = str_c(args$output_folder, "/brain/brain_ewce_figure_top50_cf_pdbrain_bottomlegend.pdf"),
-        device = "pdf",
-        dpi = 300,
-        units = "cm",
-        width = 18,
-        height = 12,
-        limitsize = TRUE)
-
-
-```
-
-
 
 ```{r, eval = F}
 ggsave(ewce_figure,
-        file = str_c(args$output_folder, "/brain/brain_ewce_figure_top50_cf_pdbrain_rightlegend.png"),
+        file = str_c(args$output_folder, "/brain/brain_ewce_figure_top50_cf_pdbrain.png"),
         device = "png",
-        dpi = 300,
-        units = "cm",
-        width = 12,
-        height = 18,
-        limitsize = TRUE)
-
-ggsave(ewce_figure,
-        file = str_c(args$output_folder, "/brain/brain_ewce_figure_top50_cf_pdbrain_rightlegend.pdf"),
-        device = "pdf",
         dpi = 300,
         units = "cm",
         width = 12,
         height = 12,
         limitsize = TRUE)
 
-
-
+ggsave(ewce_figure,
+        file = str_c(args$output_folder, "/brain/brain_ewce_figure_top50_cf_pdbrain.pdf"),
+        device = "pdf",
+        dpi = 300,
+        units = "cm",
+        width = 12,
+        height = 12,
+        limitsize = TRUE)
 ```
 ```
 
@@ -811,8 +751,7 @@ plot_list[[1]]
 ewce_genes_control$results
 ```
 
-## Combine figures for publication
- 
+
 ```{r, fig.width = 18, fig.height = 12}
 
 supp_7_figure <- ((total_sites_violin +  edit_resid_violin +  parallel_plot) /
@@ -820,7 +759,7 @@ supp_7_figure <- ((total_sites_violin +  edit_resid_violin +  parallel_plot) /
     plot_annotation(tag_levels = "a")
   #  +plot_annotation(tag_levels = list(c("d", "e", "f", "g", "h", "i", "j")))
 
-
+supp_7_figure
 
 ggsave(supp_7_figure,
        file = str_c(args$output_folder, "/brain/supp_7_figure.pdf"),
@@ -845,42 +784,4 @@ ggsave(supp_7_figure,
 
                     
 ```
-
-```{r}
-supp_7_figure_abridged <- ((total_sites_violin |  edit_resid_violin ) /
-    (genic_dif_plot |  biotype_dif_plot )) +
-    plot_annotation(tag_levels = "a")
-    supp_7_figure_abridged 
-    
-    
-    ggsave(supp_7_figure_abridged,
-       file = str_c(args$output_folder, "/brain/supp_7_figure_abridged.pdf"),
-       device = "pdf",
-       dpi = 300,
-       units = "mm",
-       width = 220,
-       height = 180,
-       limitsize = TRUE
-)
-
-ggsave(supp_7_figure_abridged,
-       file = str_c(args$output_folder, "/brain/supp_7_figure_abridged.png"),
-       path = args$figure_output_dir,
-       device = "png",
-       dpi = 300,
-       units = "mm",
-       width = 220,
-       height = 180,
-       limitsize = TRUE
-)
-    
-```
-
-
-
-
-
-
-
-
 

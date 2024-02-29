@@ -93,4 +93,6 @@ results/
 references/
 raw_data/
 docs/99*
-figures/single_cell_gene_expression/From*
+figures/single_cell_gene_expression/
+scripts/check_anndata.py
+docs/single_cell_adar.ipynb

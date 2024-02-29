@@ -8,4 +8,4 @@ Imports:
     tidyverse,
     rmarkdown
 Encoding: UTF-8
-License: MIT + file LICENSE
+License: GPL (>= 3)
